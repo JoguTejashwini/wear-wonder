@@ -1,0 +1,48 @@
+[
+  {
+    "idea_original": "Create a video showing six jeans and top combinations for college girls, using my female master model consistently.",
+    "audience": "College girls",
+    "outfit_count": null,
+    "requested_characters": [
+      "WW-CHAR-01"
+    ],
+    "interpretation_method": "LOCAL_RULES",
+    "interpretation_note": "Automatically extracted fields are suggestions. Review them before approving the research brief.",
+    "additional_requirements": null,
+    "research_status": "PENDING",
+    "outfit_approval": "PENDING",
+    "created_at": "2026-10-23T15:26:09.385791+00:00"
+  },
+  {
+    "brief_id": "5d9f5893-fdfa-4899-9a9c-0ec1f359c871",
+    "idea_original": "Create a video showing six jeans and top combinations for college girls, using my female master model consistently.",
+    "audience": "College girls",
+    "outfit_count": 6,
+    "requested_characters": [
+      "WW-CHAR-01"
+    ],
+    "interpretation_method": "LOCAL_RULES",
+    "interpretation_note": "Extracted details are suggestions. Review them before approving the research brief.",
+    "additional_requirements": null,
+    "research_status": "PENDING",
+    "outfit_approval": "PENDING",
+    "created_at": "2026-10-24T06:25:09.053758+00:00"
+  },
+  {
+    "brief_id": "39657116-89dd-43f7-8023-d5ab6e5b3705",
+    "idea_original": "create the video about outfit color combinations ",
+    "audience": "College girls",
+    "outfit_count": 6,
+    "requested_characters": [
+      "WW-CHAR-01",
+      "WW-CHAR-03"
+    ],
+    "interpretation_method": "LOCAL_RULES",
+    "interpretation_note": "Extracted details are suggestions. Review them before approving the research brief.",
+    "additional_requirements": null,
+    "research_status": "PENDING",
+    "outfit_approval": "PENDING",
+    "created_at": "2026-10-24T06:47:37.330889+00:00",
+    "reference_url": null
+  }
+]

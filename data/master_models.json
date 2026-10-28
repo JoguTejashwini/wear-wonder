@@ -1,0 +1,32 @@
+[
+  {
+    "model_id": "WW-CHAR-01",
+    "display_name": "Female Model 01",
+    "identity_notes": "Young adult Korean female fashion model with a lean, proportionate build and realistic anatomy. Oval-to-oblong face with a softly tapered jaw, subtle cheekbones, almond-shaped dark brown eyes, naturally defined straight-to-gently arched eyebrows, a straight refined nose, medium-full natural lips, and a composed neutral expression. Light-to-medium warm beige skin tone with realistic skin texture. Black hair with a naturally straight texture, a clean center part, a smooth hairline, and a neat, polished appearance. Preserve the same facial proportions, eye shape, nose, lips, jawline, skin tone, hairline, and body proportions in every generated image. Maintain realistic anatomy and natural photographic detail. Do not redesign her face or change her identity when changing outfits.",
+    "hair_rules": "Permanent hair identity: natural black color, straight texture, clean center part, consistent hairline and density, and a sleek, refined appearance. For casual and college outfits, use a sleek center-parted low ponytail. For formal and professional outfits, use a sleek center-parted low bun. Keep the hair length and underlying texture consistent with the master reference; the ponytail and bun are styling variations, not separate identities. Only use loose hair or other hairstyles when explicitly approved. No unapproved hair-color changes, bangs, dramatic cuts, or changes to the hairline.",
+    "reference_image": "assets\\master_models\\WW-CHAR-01.png",
+    "approval_status": "APPROVED",
+    "created_or_updated_at": "2026-10-24T08:20:45.578415+00:00",
+    "approval_updated_at": "2026-10-24T08:32:10.895525+00:00"
+  },
+  {
+    "model_id": "WW-CHAR-02",
+    "display_name": "Female Model 02",
+    "identity_notes": "Young adult female fashion model with a lean, balanced build and natural human proportions. Soft oval face with a gently tapered chin, defined but natural cheekbones, light-colored eyes appearing blue-grey or green-grey in the reference, well-defined softly arched eyebrows, a straight delicate nose, and naturally full lips. Warm fair-to-light skin tone with realistic skin texture and subtle natural facial detail. Long chestnut-brown hair with a subtle warm tone and natural volume. Maintain the same eye color, facial proportions, nose shape, lip shape, jawline, skin tone, hairline, hair color, and body proportions across all generated outfits. Preserve her recognizable identity without excessive skin smoothing, exaggerated facial symmetry, or doll-like features.",
+    "hair_rules": "Permanent hair identity: long chestnut-brown hair, warm brown undertones, naturally voluminous texture, soft loose waves, and a relaxed side-of-center part as shown in the master reference. For casual outfits, wear the hair loose with natural waves and realistic flyaways. For formal outfits, allow a polished low ponytail or low bun while preserving the same hair color, hairline, density, and underlying texture. Use a half-up style only when suitable for the outfit. Do not change her hair to black or blonde, introduce bangs, or alter the length dramatically without explicit approval. Avoid overly glossy, plastic-looking hair.",
+    "reference_image": "assets\\master_models\\WW-CHAR-02.png",
+    "approval_status": "APPROVED",
+    "created_or_updated_at": "2026-10-24T08:23:32.833669+00:00",
+    "approval_updated_at": "2026-10-24T08:32:23.209824+00:00"
+  },
+  {
+    "model_id": "WW-CHAR-03",
+    "display_name": "Male Model 01",
+    "identity_notes": "Young adult male fashion model with a tall-looking, lean athletic build and realistic body proportions. Oval-to-oblong face with a defined jawline, softly prominent cheekbones, dark brown almond-shaped eyes, thick natural eyebrows, a straight nose, medium lips, and a calm, subtly confident expression. Light-to-medium warm skin tone with realistic skin texture and natural facial detail. Thick dark brown hair with a naturally wavy texture, visible volume at the top, loose curls and waves around the forehead, and shorter sides. Preserve the same facial proportions, jawline, eyes, nose, lips, skin tone, hairline, hair color, and body proportions in every generated image. Maintain a realistic, youthful adult appearance without changing his identity.",
+    "hair_rules": "Permanent hair identity: dark brown, thick, naturally wavy hair with loose curls, textured volume on top, and comparatively shorter sides. For everyday and casual outfits, keep the hair naturally tousled with soft, irregular waves and a relaxed fringe. For smart-casual and formal outfits, use a more controlled, neatly shaped version of the same wavy hairstyle. Preserve the natural dark brown color, hairline, curl pattern, and overall silhouette. Do not make the hair straight, change it to black or blonde, add a dramatic fade, or introduce a new haircut without explicit approval.",
+    "reference_image": "assets\\master_models\\WW-CHAR-03.png",
+    "approval_status": "APPROVED",
+    "created_or_updated_at": "2026-10-24T08:25:02.944819+00:00",
+    "approval_updated_at": "2026-10-24T08:31:57.446917+00:00"
+  }
+]
