@@ -1,12 +1,40 @@
-"""Integration tests for the AI brief generation and saving workflow."""
+"""Integration tests for the complete Stages 1–5 fashion production workflow."""
 import json
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from app.approval_workflow import (
+    ApprovalStatus,
+    WorkflowStage,
+    approve_research,
+    can_proceed_to_stage,
+    get_workflow_prerequisites,
+)
 from app.fashion_ai import interpret_idea_with_gemini
 from app.idea_intake import create_research_brief, save_research_brief
+from app.image_generation.image_service import (
+    approve_image,
+    import_generated_image,
+    prepare_image_prompts,
+)
+from app.research.provider import MockSearchProvider, SearchResult
+from app.research.research_service import execute_fashion_research
+from app.storage import (
+    load_all_briefs,
+    load_image_assets,
+    load_outfits,
+    load_video_assets,
+    save_or_update_brief,
+)
+from app.styling.outfit_generator import generate_outfit_proposals
+from app.styling.outfit_service import approve_all_outfits
+from app.video_generation.video_service import (
+    approve_video_clip,
+    import_generated_video,
+    prepare_video_prompts,
+)
 
 
 class MockInteraction:
@@ -19,7 +47,8 @@ class TestBriefWorkflow(unittest.TestCase):
 
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.test_data_file = Path(self.temp_dir.name) / "research.json"
+        self.test_data_dir = Path(self.temp_dir.name)
+        self.test_data_file = self.test_data_dir / "research.json"
 
     def tearDown(self):
         self.temp_dir.cleanup()
@@ -117,6 +146,144 @@ class TestBriefWorkflow(unittest.TestCase):
             self.assertEqual(saved_data[1]["research_status"], "PENDING")
             self.assertEqual(saved_data[1]["outfit_approval"], "PENDING")
             self.assertEqual(saved_data[1]["interpretation_method"], "GEMINI_API")
+
+    @patch("app.research.research_service.check_url_accessibility", return_value=(True, 200))
+    def test_complete_stages_1_to_5_lifecycle(self, mock_check):
+        """Verify the integrated pipeline across Stages 1 through 5 with strict gate enforcement."""
+        with (
+            patch("app.storage.RESEARCH_FILE", self.test_data_dir / "research.json"),
+            patch("app.storage.OUTFITS_FILE", self.test_data_dir / "outfits.json"),
+            patch("app.storage.IMAGE_ASSETS_FILE", self.test_data_dir / "image_assets.json"),
+            patch("app.storage.VIDEO_ASSETS_FILE", self.test_data_dir / "video_assets.json"),
+            patch("app.storage.RESEARCH_SOURCES_FILE", self.test_data_dir / "research_sources.json"),
+            patch("app.storage.AUDIT_LOG_FILE", self.test_data_dir / "workflow_audit.json"),
+            patch("app.image_generation.image_service.GENERATED_IMAGES_DIR", self.test_data_dir / "images"),
+            patch("app.video_generation.video_service.GENERATED_VIDEOS_DIR", self.test_data_dir / "videos"),
+        ):
+            # ----------------------------------------------------
+            # STAGE 1: Idea Intake
+            # ----------------------------------------------------
+            idea_text = "Create three jeans and tops looks for college girls using female model 01"
+            brief = create_research_brief(
+                idea=idea_text,
+                requested_characters=["WW-CHAR-01"],
+                outfit_count=3,
+                audience="College girls",
+            )
+            save_or_update_brief(brief)
+            brief_id = brief["brief_id"]
+
+            prereqs = get_workflow_prerequisites(brief_id)
+            self.assertTrue(prereqs["has_brief"])
+            self.assertFalse(prereqs["research_completed"])
+            self.assertFalse(prereqs["outfits_approved"])
+
+            # Verify Gate: Cannot jump directly to Stage 3 or Stage 4
+            can_p, _ = can_proceed_to_stage(brief_id, WorkflowStage.STAGE_3_OUTFITS)
+            self.assertFalse(can_p)
+            can_p, _ = can_proceed_to_stage(brief_id, WorkflowStage.STAGE_4_IMAGES)
+            self.assertFalse(can_p)
+
+            # ----------------------------------------------------
+            # STAGE 2: Live Fashion Research
+            # ----------------------------------------------------
+            mock_provider = MockSearchProvider([
+                SearchResult(
+                    title="Vogue Campus Denim Trends",
+                    url="https://vogue.com/campus-denim",
+                    snippet="Straight-leg jeans and clean baby tees define everyday styling.",
+                    publisher="Vogue",
+                ),
+                SearchResult(
+                    title="Elle Styling Playbook",
+                    url="https://elle.com/denim-playbook",
+                    snippet="Retro trainers balance relaxed denim volume.",
+                    publisher="Elle",
+                ),
+            ])
+            res_result = execute_fashion_research(brief_id, provider=mock_provider)
+            self.assertEqual(len(res_result["sources"]), 2)
+
+            # Research is completed, but still PENDING user approval
+            prereqs = get_workflow_prerequisites(brief_id)
+            self.assertTrue(prereqs["research_completed"])
+            self.assertFalse(prereqs["research_approved"])
+
+            # User reviews and explicitly approves research
+            approve_research(brief_id, user_name="Test Fashion Lead")
+            prereqs = get_workflow_prerequisites(brief_id)
+            self.assertTrue(prereqs["research_approved"])
+
+            # Now permitted to proceed to Stage 3
+            can_p, _ = can_proceed_to_stage(brief_id, WorkflowStage.STAGE_3_OUTFITS)
+            self.assertTrue(can_p)
+
+            # ----------------------------------------------------
+            # STAGE 3: Outfit Proposals & Validation
+            # ----------------------------------------------------
+            outfits = generate_outfit_proposals(brief_id, count=3)
+            self.assertEqual(len(outfits), 3)
+            self.assertTrue(all(o["approval_status"] == "PENDING" for o in outfits))
+
+            # User approves all 3 outfit proposals
+            approve_all_outfits(brief_id, user_name="Test Fashion Lead")
+            prereqs = get_workflow_prerequisites(brief_id)
+            self.assertTrue(prereqs["outfits_approved"])
+
+            # Now permitted to proceed to Stage 4
+            can_p, _ = can_proceed_to_stage(brief_id, WorkflowStage.STAGE_4_IMAGES)
+            self.assertTrue(can_p)
+
+            # ----------------------------------------------------
+            # STAGE 4: Image Prompts, Generation & Approval
+            # ----------------------------------------------------
+            img_assets = prepare_image_prompts(brief_id)
+            self.assertEqual(len(img_assets), 3)
+
+            # Import images for each outfit and approve them
+            fake_png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDRtestbytes"
+            for img in img_assets:
+                import_generated_image(
+                    brief_id=brief_id,
+                    image_id=img["image_id"],
+                    image_bytes=fake_png,
+                    file_extension=".png",
+                )
+                approve_image(brief_id, img["image_id"], user_name="Test Fashion Lead")
+
+            prereqs = get_workflow_prerequisites(brief_id)
+            self.assertTrue(prereqs["images_approved"])
+
+            # Now permitted to proceed to Stage 5
+            can_p, _ = can_proceed_to_stage(brief_id, WorkflowStage.STAGE_5_VIDEOS)
+            self.assertTrue(can_p)
+
+            # ----------------------------------------------------
+            # STAGE 5: Video Prompts, Generation & Approval
+            # ----------------------------------------------------
+            vid_assets = prepare_video_prompts(brief_id)
+            self.assertEqual(len(vid_assets), 3)
+
+            fake_mp4 = b"\x00\x00\x00\x18ftypmp42fakevideoclip"
+            for vid in vid_assets:
+                import_generated_video(
+                    brief_id=brief_id,
+                    clip_id=vid["clip_id"],
+                    video_bytes=fake_mp4,
+                    file_extension=".mp4",
+                )
+                approve_video_clip(brief_id, vid["clip_id"], user_name="Test Fashion Lead")
+
+            # ----------------------------------------------------
+            # FINAL STAGE GATE CHECK: Stage 6 Editing Readiness
+            # ----------------------------------------------------
+            prereqs = get_workflow_prerequisites(brief_id)
+            self.assertTrue(prereqs["videos_approved"])
+            self.assertTrue(prereqs["stage_6_ready"])
+
+            can_p, msg = can_proceed_to_stage(brief_id, WorkflowStage.STAGE_6_READY)
+            self.assertTrue(can_p)
+            self.assertIn("Ready for Stage 6", msg)
 
 
 if __name__ == "__main__":

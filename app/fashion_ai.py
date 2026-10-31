@@ -10,6 +10,8 @@ from google import genai
 from google.genai import types
 import httpx
 
+from app.topic_router import classify_topic
+
 load_dotenv()
 
 DEFAULT_MODEL = "gemini-3.8-flash"
@@ -123,6 +125,7 @@ def interpret_idea_with_gemini(
         )
 
     target_model = model or os.getenv("GEMINI_MODEL", DEFAULT_MODEL)
+    classified_topic = classify_topic(idea)
 
     prompt = f"""
 Plan a fashion video for Wear & Wonder. Interpret the user's idea faithfully.
@@ -140,6 +143,7 @@ WW-CHAR-03 = Male Model 01
 
 Return one JSON object with exactly these fields:
 {{
+  "primary_topic": "{classified_topic.topic_id}",
   "audience": null,
   "outfit_count": null,
   "requested_characters": [],
@@ -323,6 +327,8 @@ REFERENCE URL:
         ][:limit]
 
     return {
+        "primary_topic": classified_topic.topic_id,
+        "topic_name": classified_topic.display_name,
         "audience": audience,
         "outfit_count": count,
         "requested_characters": characters,

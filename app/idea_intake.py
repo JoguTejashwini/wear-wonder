@@ -4,6 +4,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from app.topic_router import classify_topic, get_topic_config
+
 DATA_FILE = (
     Path(__file__).resolve().parent.parent
     / "data"
@@ -17,6 +19,8 @@ def interpret_idea(idea: str) -> dict:
     text = idea.strip()
     if not text:
         raise ValueError("Video idea cannot be empty.")
+
+    topic_cfg = classify_topic(text)
 
     number_words = {
         "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
@@ -52,6 +56,8 @@ def interpret_idea(idea: str) -> dict:
 
     return {
         "idea_original": original_idea,
+        "primary_topic": topic_cfg.topic_id,
+        "topic_name": topic_cfg.display_name,
         "audience": audience,
         "outfit_count": outfit_count,
         "requested_characters": list(dict.fromkeys(characters)),
@@ -69,6 +75,7 @@ def create_research_brief(
     audience: str | None = None,
     outfit_count: int | None = None,
     additional_requirements: str | None = None,
+    primary_topic: str | None = None,
 ) -> dict:
     """Create a structured research brief with a unique ID."""
     interpreted = interpret_idea(idea)
@@ -85,9 +92,14 @@ def create_research_brief(
     if outfit_count is not None and outfit_count != int(outfit_count):
         raise ValueError("Outfit count must be a whole number.")
 
+    topic_id = primary_topic or interpreted.get("primary_topic", "general_fashion")
+    topic_cfg = get_topic_config(topic_id)
+
     return {
         "brief_id": str(uuid.uuid4()),
         **interpreted,
+        "primary_topic": topic_cfg.topic_id,
+        "topic_name": topic_cfg.display_name,
         "audience": audience if audience is not None else interpreted["audience"],
         "outfit_count": outfit_count if outfit_count is not None else interpreted["outfit_count"],
         "requested_characters": characters,
@@ -99,7 +111,7 @@ def create_research_brief(
 
 
 def save_research_brief(brief: dict) -> None:
-    """Append a research brief without overwriting existing records."""
+    """Append or update a research brief without overwriting existing records."""
     DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
     if DATA_FILE.exists():
         try:
@@ -114,10 +126,16 @@ def save_research_brief(brief: dict) -> None:
     brief_id = brief.get("brief_id")
     if not brief_id:
         raise ValueError("Research brief must have a unique brief_id.")
-    if any(isinstance(record, dict) and record.get("brief_id") == brief_id for record in records):
-        raise ValueError(f"Duplicate brief ID: {brief_id}")
 
-    records.append(brief)
+    existing_index = next(
+        (i for i, r in enumerate(records) if isinstance(r, dict) and r.get("brief_id") == brief_id),
+        None,
+    )
+    if existing_index is not None:
+        records[existing_index] = brief
+    else:
+        records.append(brief)
+
     temporary_file = DATA_FILE.with_suffix(".tmp")
     try:
         temporary_file.write_text(json.dumps(records, indent=2, ensure_ascii=False), encoding="utf-8")
