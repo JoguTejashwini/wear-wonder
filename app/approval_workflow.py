@@ -1,5 +1,6 @@
 """Global workflow gatekeeper and status invalidation manager for Wear & Wonder."""
 from enum import Enum
+from pathlib import Path
 from typing import Any
 from app.storage import (
     get_brief_by_id,
@@ -12,6 +13,8 @@ from app.storage import (
     save_video_assets,
     record_audit_event,
 )
+
+PROJECT_DIR = Path(__file__).resolve().parent.parent
 
 
 class WorkflowStage(str, Enum):
@@ -60,7 +63,7 @@ def get_workflow_prerequisites(brief_id: str) -> dict[str, bool]:
 
     images = load_image_assets(brief_id)
     has_images = len(images) > 0
-    # Every approved outfit must have a corresponding approved image
+    # Every approved outfit must have a corresponding approved image with verified file on disk
     approved_outfit_ids = {o["outfit_id"] for o in outfits if o.get("approval_status") == ApprovalStatus.APPROVED.value}
     images_by_outfit = {img.get("outfit_id"): img for img in images}
     images_approved = (
@@ -68,6 +71,8 @@ def get_workflow_prerequisites(brief_id: str) -> dict[str, bool]:
         and all(
             images_by_outfit.get(oid) is not None
             and images_by_outfit[oid].get("approval_status") == ApprovalStatus.APPROVED.value
+            and bool(images_by_outfit[oid].get("file_path"))
+            and (PROJECT_DIR / images_by_outfit[oid]["file_path"]).is_file()
             for oid in approved_outfit_ids
         )
     )
@@ -238,6 +243,7 @@ def invalidate_downstream_for_outfit(brief_id: str, outfit_id: str, reason: str)
     vid_changed = False
     for vid in videos:
         if vid.get("outfit_id") == outfit_id:
+            vid["is_outdated"] = True
             if vid.get("approval_status") != ApprovalStatus.PENDING.value:
                 old = vid.get("approval_status")
                 vid["approval_status"] = ApprovalStatus.PENDING.value
@@ -251,6 +257,8 @@ def invalidate_downstream_for_outfit(brief_id: str, outfit_id: str, reason: str)
                     asset_id=vid.get("clip_id"),
                     details=f"Downstream video clip invalidated because {reason}.",
                 )
+            else:
+                vid_changed = True
     if vid_changed:
         save_video_assets(brief_id, videos)
 

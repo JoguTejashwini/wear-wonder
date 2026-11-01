@@ -1,4 +1,4 @@
-"""Unit tests for Stage 4: Image Prompts, Character Fidelity, and Manual Handoff."""
+"""Unit tests for Stage 4: Image Prompts, Character Fidelity, Upload, and Visual Verification."""
 import tempfile
 import unittest
 from pathlib import Path
@@ -6,12 +6,11 @@ from unittest.mock import patch
 
 from app.approval_workflow import ApprovalStatus
 from app.image_generation.image_service import (
-    approve_all_images_in_chatgpt,
     approve_image,
-    approve_image_in_chatgpt,
     import_generated_image,
     prepare_image_prompts,
     reject_image,
+    update_image_visual_description,
 )
 from app.image_generation.prompt_builder import (
     build_image_prompt_for_outfit,
@@ -19,8 +18,10 @@ from app.image_generation.prompt_builder import (
 )
 from app.storage import (
     load_image_assets,
+    load_video_assets,
     save_or_update_brief,
     save_outfits,
+    save_video_assets,
 )
 
 
@@ -99,95 +100,128 @@ class TestImageStudio(unittest.TestCase):
                 prepare_image_prompts(self.brief_id)
             self.assertIn("No approved outfits found", str(ctx.exception))
 
-    def test_prepare_prompts_and_import_generated_image(self):
+    def test_prepare_prompts_initializes_visual_baseline(self):
         with (
             patch("app.storage.RESEARCH_FILE", self.test_data_dir / "research.json"),
             patch("app.storage.OUTFITS_FILE", self.test_data_dir / "outfits.json"),
             patch("app.storage.IMAGE_ASSETS_FILE", self.test_data_dir / "image_assets.json"),
             patch("app.storage.AUDIT_LOG_FILE", self.test_data_dir / "workflow_audit.json"),
-            patch("app.image_generation.image_service.GENERATED_IMAGES_DIR", self.test_data_dir / "images"),
         ):
             save_or_update_brief(self.mock_brief)
             save_outfits(self.brief_id, [self.mock_outfit])
 
-            # 1. Prepare prompt
             assets = prepare_image_prompts(self.brief_id)
             self.assertEqual(len(assets), 1)
-            self.assertEqual(assets[0]["approval_status"], "PENDING")
-            self.assertIsNone(assets[0]["file_path"])
+            asset = assets[0]
+            self.assertEqual(asset["prompt_version"], 1)
+            self.assertIn("visual_description", asset)
+            vd = asset["visual_description"]
+            self.assertIn("Light blue", vd["clothing"])
+            self.assertIn("White retro sneakers", vd["footwear"])
+            self.assertIn("natural black", vd["hairstyle"].lower())
 
-            # 2. Cannot approve before image file is imported
-            with self.assertRaises(ValueError):
+    def test_import_image_and_update_visual_description(self):
+        img_dir = self.test_data_dir / "images"
+        with (
+            patch("app.storage.RESEARCH_FILE", self.test_data_dir / "research.json"),
+            patch("app.storage.OUTFITS_FILE", self.test_data_dir / "outfits.json"),
+            patch("app.storage.IMAGE_ASSETS_FILE", self.test_data_dir / "image_assets.json"),
+            patch("app.storage.AUDIT_LOG_FILE", self.test_data_dir / "workflow_audit.json"),
+            patch("app.image_generation.image_service.GENERATED_IMAGES_DIR", img_dir),
+            patch("app.image_generation.image_service.PROJECT_DIR", self.test_data_dir),
+            patch("app.approval_workflow.PROJECT_DIR", self.test_data_dir),
+        ):
+            save_or_update_brief(self.mock_brief)
+            save_outfits(self.brief_id, [self.mock_outfit])
+            prepare_image_prompts(self.brief_id)
+
+            # 1. Approval fails before file upload
+            with self.assertRaises(ValueError) as ctx:
                 approve_image(self.brief_id, "IMG-01")
+            self.assertIn("Upload the actual generated image file first", str(ctx.exception))
 
-            # 3. Import image bytes
-            fake_png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDRfakeimagebytes"
+            # 2. Upload image file
+            fake_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDRfakedata"
             imported = import_generated_image(
                 brief_id=self.brief_id,
                 image_id="IMG-01",
-                image_bytes=fake_png,
+                image_bytes=fake_bytes,
                 file_extension=".png",
             )
             self.assertIsNotNone(imported["file_path"])
+            self.assertEqual(imported["provider"], "CHATGPT_UPLOAD")
             self.assertEqual(imported["approval_status"], "PENDING")
 
-            # 4. Now approve
+            # 3. Update visual description
+            custom_vd = {
+                "clothing": "Vintage washed straight denim and ribbed baby tee",
+                "colours": "Washed light blue and crisp white",
+                "fit": "High rise straight cut",
+                "footwear": "White court sneakers with grey trim",
+                "accessories": "Ecru canvas tote bag",
+                "hairstyle": "Shoulder-length black hair parted neatly",
+                "background": "Sunlit college campus courtyard",
+                "pose": "Walking forward smiling naturally",
+            }
+            updated = update_image_visual_description(self.brief_id, "IMG-01", custom_vd)
+            self.assertEqual(updated["visual_description"]["clothing"], "Vintage washed straight denim and ribbed baby tee")
+
+            # 4. Now approve image
             approved = approve_image(self.brief_id, "IMG-01")
             self.assertEqual(approved["approval_status"], ApprovalStatus.APPROVED.value)
 
-    def test_build_image_prompt_contains_chatgpt_prompt(self):
-        prompt_data = build_image_prompt_for_outfit(self.mock_outfit, "WW-CHAR-01")
-        self.assertIn("chatgpt_prompt", prompt_data)
-        chat_prompt = prompt_data["chatgpt_prompt"]
-        self.assertIn("WW-CHAR-01", chat_prompt)
-        self.assertIn("attached master model reference image", chat_prompt)
-        self.assertIn("Strictly maintain her exact facial structure", chat_prompt)
-        self.assertIn("Relaxed Straight Denim and White Tee", chat_prompt)
-        self.assertIn("9:16", chat_prompt)
-
-    def test_approve_image_in_chatgpt_direct_mode(self):
+    def test_reupload_increments_version_and_invalidates_downstream_video(self):
+        img_dir = self.test_data_dir / "images"
         with (
             patch("app.storage.RESEARCH_FILE", self.test_data_dir / "research.json"),
             patch("app.storage.OUTFITS_FILE", self.test_data_dir / "outfits.json"),
             patch("app.storage.IMAGE_ASSETS_FILE", self.test_data_dir / "image_assets.json"),
+            patch("app.storage.VIDEO_ASSETS_FILE", self.test_data_dir / "video_assets.json"),
             patch("app.storage.AUDIT_LOG_FILE", self.test_data_dir / "workflow_audit.json"),
+            patch("app.image_generation.image_service.GENERATED_IMAGES_DIR", img_dir),
+            patch("app.image_generation.image_service.PROJECT_DIR", self.test_data_dir),
+            patch("app.approval_workflow.PROJECT_DIR", self.test_data_dir),
         ):
             save_or_update_brief(self.mock_brief)
             save_outfits(self.brief_id, [self.mock_outfit])
-
-            # Prepare prompts
-            assets = prepare_image_prompts(self.brief_id)
-            self.assertEqual(len(assets), 1)
-            self.assertIsNone(assets[0]["file_path"])
-
-            # Directly approve in ChatGPT (no local file uploaded)
-            approved = approve_image_in_chatgpt(self.brief_id, "IMG-01")
-            self.assertEqual(approved["approval_status"], ApprovalStatus.APPROVED.value)
-            self.assertEqual(approved["provider"], "CHATGPT_DIRECT")
-            self.assertIsNone(approved["file_path"])
-
-            # Loaded asset reflects approval
-            loaded = load_image_assets(self.brief_id)
-            self.assertEqual(loaded[0]["approval_status"], ApprovalStatus.APPROVED.value)
-            self.assertEqual(loaded[0]["provider"], "CHATGPT_DIRECT")
-
-    def test_approve_all_images_in_chatgpt(self):
-        with (
-            patch("app.storage.RESEARCH_FILE", self.test_data_dir / "research.json"),
-            patch("app.storage.OUTFITS_FILE", self.test_data_dir / "outfits.json"),
-            patch("app.storage.IMAGE_ASSETS_FILE", self.test_data_dir / "image_assets.json"),
-            patch("app.storage.AUDIT_LOG_FILE", self.test_data_dir / "workflow_audit.json"),
-        ):
-            save_or_update_brief(self.mock_brief)
-            outfit2 = dict(self.mock_outfit)
-            outfit2["outfit_id"] = "OUTFIT-02"
-            save_outfits(self.brief_id, [self.mock_outfit, outfit2])
-
             prepare_image_prompts(self.brief_id)
-            approved_all = approve_all_images_in_chatgpt(self.brief_id)
-            self.assertEqual(len(approved_all), 2)
-            self.assertTrue(all(a["approval_status"] == ApprovalStatus.APPROVED.value for a in approved_all))
-            self.assertTrue(all(a["provider"] == "CHATGPT_DIRECT" for a in approved_all))
+
+            # Upload initial image (v1)
+            import_generated_image(
+                brief_id=self.brief_id,
+                image_id="IMG-01",
+                image_bytes=b"fake_v1_bytes",
+                file_extension=".png",
+            )
+            approve_image(self.brief_id, "IMG-01")
+
+            # Simulate an existing downstream video prompt in Stage 5
+            mock_video = {
+                "clip_id": "CLIP-01",
+                "brief_id": self.brief_id,
+                "outfit_id": "OUTFIT-01",
+                "approved_image_id": "IMG-01",
+                "character_id": "WW-CHAR-01",
+                "approval_status": "APPROVED",
+                "is_outdated": False,
+            }
+            save_video_assets(self.brief_id, [mock_video])
+
+            # Re-upload a replacement image for the same outfit
+            reuploaded = import_generated_image(
+                brief_id=self.brief_id,
+                image_id="IMG-01",
+                image_bytes=b"fake_v2_bytes",
+                file_extension=".png",
+            )
+            self.assertEqual(reuploaded["prompt_version"], 2)
+            self.assertEqual(reuploaded["approval_status"], "PENDING")
+
+            # Verify downstream video prompt is marked outdated and reset to PENDING
+            vids = load_video_assets(self.brief_id)
+            self.assertEqual(len(vids), 1)
+            self.assertTrue(vids[0]["is_outdated"])
+            self.assertEqual(vids[0]["approval_status"], "PENDING")
 
 
 if __name__ == "__main__":

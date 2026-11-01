@@ -1,4 +1,5 @@
 """Video prompt generator for fashion clips, motion continuity, and Google Flow handoff."""
+from pathlib import Path
 from typing import Any
 
 from app.image_generation.prompt_builder import get_verified_character_profile
@@ -10,18 +11,30 @@ def build_video_prompt_for_outfit(
     clip_index: int = 1,
     dual_character_id: str | None = None,
 ) -> dict[str, Any]:
-    """Construct an explicit video generation prompt covering motion, camera, dialogue, and lip-sync."""
+    """Construct an explicit video generation prompt aligned with the approved image visual description."""
     primary_char_id = image_asset.get("character_id") or outfit.get("assigned_character_id") or "WW-CHAR-01"
     primary_char = get_verified_character_profile(primary_char_id)
 
+    # Use the approved image's reviewed visual description as the ground truth
+    visual_desc = image_asset.get("visual_description") or {}
     title = outfit.get("outfit_title", f"Look {clip_index}")
-    garment_desc = outfit.get("garment_descriptions", "")
-    footwear = outfit.get("footwear", "Coordinated footwear")
-    accessories = outfit.get("accessories", "Minimal accessories")
+    garment_desc = visual_desc.get("clothing") or outfit.get("garment_descriptions", "")
+    colours = visual_desc.get("colours") or ", ".join(outfit.get("colours", ["curated fashion tones"]))
+    fit_silhouette = visual_desc.get("fit_and_silhouette") or outfit.get("fit_and_silhouette", "Balanced silhouette")
+    footwear = visual_desc.get("footwear") or outfit.get("footwear", "Coordinated footwear")
+    accessories = visual_desc.get("accessories") or outfit.get("accessories", "Minimal accessories")
+    hairstyle = visual_desc.get("hairstyle") or primary_char.get("hair_rules", "")
+    background_desc = visual_desc.get("background") or "Contemporary warm architectural studio space with soft diffuse shadows, matching approved master image."
+
+    # Identify approved starting frame filename
+    file_path_str = image_asset.get("file_path", "")
+    start_frame_name = Path(file_path_str).name if file_path_str else image_asset.get("image_id", "APPROVED_IMAGE")
 
     # Generate dialogue tailored to this specific outfit
+    first_item = outfit.get("garments", [{}])[0].get("item", "essential piece") if outfit.get("garments") else "essential look"
+    first_col = outfit.get("colours", ["curated"])[0].lower() if outfit.get("colours") else "curated"
     dialogue_script = (
-        f"Look {clip_index}: Pairing our {outfit.get('colours', ['curated'])[0].lower()} {outfit.get('garments', [{}])[0].get('item', 'essential piece')} "
+        f"Look {clip_index}: Pairing our {first_col} {first_item} "
         f"with {footwear.lower()} for effortless everyday style."
     )
 
@@ -54,10 +67,13 @@ def build_video_prompt_for_outfit(
     neck_head_movements = "Subtle natural head tilt emphasizing neckline and shoulder tailoring during vocal delivery."
     camera_framing = "Vertical 9:16 full-body fashion framing; complete head-to-toe coverage keeping footwear visible throughout the motion."
     camera_movement = "Very subtle slow tracking push-in (zoom 1.0x to 1.08x) with a completely stable horizon and zero camera shake."
-    background = "Contemporary warm architectural studio space with soft diffuse shadows, matching approved master image."
-    lighting = "Consistent soft commercial key lighting; high color fidelity maintaining exact garment hues."
+    background = background_desc
+    lighting = "Consistent soft commercial key lighting; high color fidelity maintaining exact garment hues matching approved starting frame."
     audio_requirements = "Clear, crisp studio vocal narration; subtle warm acoustic lo-fi fashion background music cue; zero audio distortion."
-    continuity_requirements = "Garments, hair, colors, and textures must maintain 100% visual consistency with the approved starting frame throughout all 6 seconds."
+    continuity_requirements = (
+        f"Garments ({garment_desc} in {colours}), hairstyle ({hairstyle}), footwear ({footwear}), "
+        "and physical identity must maintain 100% visual consistency with the approved starting frame throughout all 6 seconds."
+    )
     negative_constraints = (
         "morphing garments, altering fabric color mid-clip, floating limbs, extra fingers, disjointed mouth movement, "
         "jittery motion, background shifting, distorted face, unapproved hair change, blurry shoes, cut off feet"
@@ -66,8 +82,9 @@ def build_video_prompt_for_outfit(
     # Master prompt block for Google Flow / Sora / Runway
     master_prompt = (
         f"Cinematic vertical fashion video (9:16 aspect ratio, 6 seconds, 24fps). "
-        f"Start Frame: Approved master outfit image for {outfit['outfit_id']} ({primary_char_id}). "
+        f"Start Frame: Approved master outfit image '{start_frame_name}' ({primary_char_id}). "
         f"Scene: {title}. {character_position} "
+        f"Actual Wardrobe: {garment_desc} in {colours}. Fit: {fit_silhouette}. Footwear: {footwear}. Accessories: {accessories}. Hairstyle: {hairstyle}. "
         f"Motion: {pose_and_movement} {hand_movements} {neck_head_movements} "
         f"Facial & Dialogue: {facial_expressions} Spoken line: \"{dialogue_script}\". {speaker_identity}. {lip_sync_instructions} "
         f"Camera: {camera_framing} {camera_movement} "
@@ -79,6 +96,7 @@ def build_video_prompt_for_outfit(
         "clip_id": f"CLIP-{clip_index:02d}",
         "outfit_id": outfit["outfit_id"],
         "approved_image_id": image_asset.get("image_id"),
+        "start_frame_image": file_path_str,
         "character_id": primary_char_id,
         "dual_character_id": dual_character_id if is_dual else None,
         "scene_description": title,
@@ -102,5 +120,6 @@ def build_video_prompt_for_outfit(
         "continuity_requirements": continuity_requirements,
         "negative_constraints": negative_constraints,
         "master_prompt": master_prompt,
-        "prompt_version": "1.0",
+        "prompt_version": image_asset.get("prompt_version", 1),
+        "visual_description": visual_desc,
     }

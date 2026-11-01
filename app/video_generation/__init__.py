@@ -5,12 +5,14 @@ from app.video_generation.video_service import (
     import_generated_video,
     import_video_from_path,
     prepare_video_prompts,
+    regenerate_single_video_prompt,
     reject_video_clip,
 )
 
 __all__ = [
     "build_video_prompt_for_outfit",
     "prepare_video_prompts",
+    "regenerate_single_video_prompt",
     "import_generated_video",
     "import_video_from_path",
     "approve_video_clip",

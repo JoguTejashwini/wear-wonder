@@ -22,7 +22,7 @@ GENERATED_VIDEOS_DIR = PROJECT_DIR / "assets" / "generated_videos"
 
 
 def prepare_video_prompts(brief_id: str) -> list[dict[str, Any]]:
-    """Construct complete video prompts and clip records for approved outfit images."""
+    """Construct complete video prompts and clip records for approved outfit images with verified files on disk."""
     brief = get_brief_by_id(brief_id)
     if not brief:
         raise ValueError(f"Brief '{brief_id}' not found.")
@@ -35,19 +35,20 @@ def prepare_video_prompts(brief_id: str) -> list[dict[str, Any]]:
     images = load_image_assets(brief_id)
     images_by_outfit = {img["outfit_id"]: img for img in images}
 
-    # Strict prerequisite check: every approved outfit must have an APPROVED image
-    # Note: image can be approved via ChatGPT-Direct mode or via local file import
+    # Strict prerequisite check: every approved outfit must have an APPROVED image with an existing file on disk
     unapproved_images = []
     for outfit in approved_outfits:
         oid = outfit["outfit_id"]
         img = images_by_outfit.get(oid)
-        if not img or img.get("approval_status") != ApprovalStatus.APPROVED.value:
-            unapproved_images.append(oid)
+        if not img or img.get("approval_status") != ApprovalStatus.APPROVED.value or not img.get("file_path"):
+            unapproved_images.append(f"{oid} (missing or unapproved image)")
+        elif not (PROJECT_DIR / img["file_path"]).is_file():
+            unapproved_images.append(f"{oid} (image file not found on disk)")
 
     if unapproved_images:
         raise ValueError(
-            f"Cannot prepare video prompts: The following approved outfits do not have an approved image yet: {', '.join(unapproved_images)}. "
-            "Please generate and approve images in Stage 4 first."
+            f"Cannot prepare video prompts: The following approved outfits do not have an approved image file on disk: {', '.join(unapproved_images)}. "
+            "Please upload, inspect, and approve outfit images in Stage 4 first."
         )
 
     GENERATED_VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
@@ -81,9 +82,12 @@ def prepare_video_prompts(brief_id: str) -> list[dict[str, Any]]:
             "brief_id": brief_id,
             "outfit_id": oid,
             "approved_image_id": img.get("image_id"),
+            "start_frame_image": img.get("file_path"),
             "character_id": img.get("character_id"),
             "dual_character_id": dual_char,
             "prompt_data": prompt_data,
+            "prompt_version": img.get("prompt_version", 1),
+            "is_outdated": False,
             "file_path": file_path,
             "provider": "GOOGLE_FLOW_MANUAL_HANDOFF",
             "approval_status": approval_status,
@@ -105,10 +109,67 @@ def prepare_video_prompts(brief_id: str) -> list[dict[str, Any]]:
         brief_id=brief_id,
         stage="STAGE_5_VIDEOS",
         action="VIDEO_PROMPTS_PREPARED",
-        details=f"Prepared {len(video_assets)} video prompts for approved outfit images.",
+        details=f"Prepared {len(video_assets)} video prompts aligned with approved images.",
     )
 
     return video_assets
+
+
+def regenerate_single_video_prompt(brief_id: str, clip_id: str) -> dict[str, Any]:
+    """Regenerate a specific video prompt when the underlying Stage 4 image has updated."""
+    videos = load_video_assets(brief_id)
+    target = next((v for v in videos if v.get("clip_id") == clip_id), None)
+    if not target:
+        raise ValueError(f"Video clip '{clip_id}' not found in brief '{brief_id}'.")
+
+    oid = target["outfit_id"]
+    outfits = load_outfits(brief_id)
+    outfit = next((o for o in outfits if o["outfit_id"] == oid), None)
+    if not outfit:
+        raise ValueError(f"Outfit '{oid}' not found.")
+
+    images = load_image_assets(brief_id)
+    img = next((i for i in images if i["outfit_id"] == oid), None)
+    if not img or img.get("approval_status") != ApprovalStatus.APPROVED.value or not img.get("file_path"):
+        raise ValueError(f"Cannot regenerate video prompt: Approved image for '{oid}' is missing or unapproved.")
+
+    full_p = (PROJECT_DIR / img["file_path"]).resolve()
+    if not full_p.is_file():
+        raise ValueError(f"Image file for '{oid}' not found on disk at {img['file_path']}.")
+
+    brief = get_brief_by_id(brief_id) or {}
+    requested_chars = brief.get("requested_characters") or []
+    has_dual_chars = len(requested_chars) >= 2
+    dual_char = requested_chars[1] if (has_dual_chars and requested_chars[0] == img.get("character_id")) else (requested_chars[0] if has_dual_chars else None)
+
+    clip_num = 1
+    if "-" in clip_id:
+        try:
+            clip_num = int(clip_id.split("-")[-1])
+        except ValueError:
+            pass
+
+    new_prompt_data = build_video_prompt_for_outfit(
+        outfit=outfit,
+        image_asset=img,
+        clip_index=clip_num,
+        dual_character_id=dual_char,
+    )
+
+    target["prompt_data"] = new_prompt_data
+    target["start_frame_image"] = img.get("file_path")
+    target["is_outdated"] = False
+    target["updated_at"] = datetime.now(timezone.utc).isoformat()
+    save_video_assets(brief_id, videos)
+
+    record_audit_event(
+        brief_id=brief_id,
+        stage="STAGE_5_VIDEOS",
+        action="VIDEO_PROMPT_REGENERATED",
+        asset_id=clip_id,
+        details=f"Regenerated video prompt for {clip_id} aligned with latest approved image.",
+    )
+    return target
 
 
 def import_generated_video(

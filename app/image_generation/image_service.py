@@ -1,4 +1,4 @@
-"""Image generation and manual handoff service for Wear & Wonder."""
+"""Image generation, visual inspection, and asset management service for Wear & Wonder."""
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -6,6 +6,7 @@ import shutil
 
 from app.approval_workflow import (
     ApprovalStatus,
+    invalidate_downstream_for_outfit,
     set_image_approval_status,
 )
 from app.image_generation.prompt_builder import (
@@ -25,7 +26,7 @@ GENERATED_IMAGES_DIR = PROJECT_DIR / "assets" / "generated_images"
 
 
 def prepare_image_prompts(brief_id: str) -> list[dict[str, Any]]:
-    """Generate image prompts for all approved outfits in a brief."""
+    """Generate image prompts and initialize visual description baselines for all approved outfits."""
     brief = get_brief_by_id(brief_id)
     if not brief:
         raise ValueError(f"Brief '{brief_id}' not found.")
@@ -59,7 +60,21 @@ def prepare_image_prompts(brief_id: str) -> list[dict[str, Any]]:
         # Preserve existing imported image file path if present and unchanged
         file_path = existing.get("file_path") if existing else None
         approval_status = existing.get("approval_status") if existing else ApprovalStatus.PENDING.value
-        provider = existing.get("provider") if existing else "CHATGPT_OR_LOCAL"
+        provider = existing.get("provider") if existing else "CHATGPT_UPLOAD"
+        prompt_version = existing.get("prompt_version", 1) if existing else 1
+
+        # Pre-populate visual description baseline from approved outfit specifications
+        visual_description = existing.get("visual_description") if existing else {
+            "clothing": outfit.get("garment_descriptions", ""),
+            "colours": ", ".join(outfit.get("colours", ["Coordinated fashion tones"])),
+            "fit_and_silhouette": outfit.get("fit_and_silhouette", "Balanced silhouette"),
+            "footwear": outfit.get("footwear", "Coordinated footwear"),
+            "accessories": outfit.get("accessories", "Minimal accessories"),
+            "hairstyle": char_profile.get("hair_rules", ""),
+            "pose": "Poised standing fashion portrait, shoulders slightly turned to camera",
+            "background": outfit.get("occasion", "Contemporary clean studio backdrop with soft commercial daylight"),
+            "styling_notes": "Generated in ChatGPT using approved master character reference.",
+        }
 
         asset_record: dict[str, Any] = {
             "image_id": image_id,
@@ -69,6 +84,8 @@ def prepare_image_prompts(brief_id: str) -> list[dict[str, Any]]:
             "character_name": char_profile["display_name"],
             "reference_image": char_profile["reference_image_path"],
             "prompt_data": prompt_data,
+            "prompt_version": prompt_version,
+            "visual_description": visual_description,
             "file_path": file_path,
             "provider": provider,
             "approval_status": approval_status,
@@ -89,7 +106,7 @@ def prepare_image_prompts(brief_id: str) -> list[dict[str, Any]]:
         brief_id=brief_id,
         stage="STAGE_4_IMAGES",
         action="PROMPTS_PREPARED",
-        details=f"Prepared {len(image_assets)} image prompts for approved outfits.",
+        details=f"Prepared {len(image_assets)} image prompts and visual baselines for approved outfits.",
     )
 
     return image_assets
@@ -103,7 +120,7 @@ def import_generated_image(
     source_notes: str = "",
     user_name: str = "User",
 ) -> dict[str, Any]:
-    """Import an image file for an image asset, save it locally, and set status to PENDING review."""
+    """Import and associate an actual generated image file for an outfit, save it locally, and invalidate downstream video assets."""
     if not image_bytes:
         raise ValueError("Image bytes cannot be empty.")
 
@@ -129,11 +146,19 @@ def import_generated_image(
         relative_path = str(dest_path)
 
     old_status = target.get("approval_status", ApprovalStatus.PENDING.value)
+    
+    # If an image was previously attached, increment the prompt/asset version
+    if target.get("file_path"):
+        target["prompt_version"] = target.get("prompt_version", 1) + 1
+
+    # If this outfit had previously approved assets or downstream video prompts, invalidate them
+    invalidate_downstream_for_outfit(brief_id, outfit_id, reason="New outfit image uploaded in Stage 4")
+
     target["file_path"] = relative_path
-    target["provider"] = "MANUAL_HANDOFF_OR_LOCAL"
+    target["provider"] = "CHATGPT_UPLOAD"
     target["approval_status"] = ApprovalStatus.PENDING.value
-    target["imported_at"] = datetime.now(timezone.utc).isoformat()
-    target["import_notes"] = source_notes or "Imported via manual handoff workflow."
+    target["uploaded_at"] = datetime.now(timezone.utc).isoformat()
+    target["import_notes"] = source_notes or "Uploaded actual ChatGPT-generated outfit image."
     target["updated_at"] = datetime.now(timezone.utc).isoformat()
 
     save_image_assets(brief_id, images)
@@ -141,11 +166,11 @@ def import_generated_image(
     record_audit_event(
         brief_id=brief_id,
         stage="STAGE_4_IMAGES",
-        action="IMAGE_IMPORTED",
+        action="IMAGE_UPLOADED",
         from_status=old_status,
         to_status=ApprovalStatus.PENDING.value,
         asset_id=image_id,
-        details=f"Image imported for {image_id} ({dest_filename}) by {user_name}.",
+        details=f"Actual generated image uploaded for {image_id} ({dest_filename}) by {user_name}. Downstream video prompts invalidated.",
     )
 
     return target
@@ -172,36 +197,63 @@ def import_image_from_path(
     )
 
 
-def approve_image(brief_id: str, image_id: str, user_name: str = "User") -> dict:
-    """Approve a reviewed image (supports local imported images or ChatGPT-direct approved images)."""
+def update_image_visual_description(
+    brief_id: str,
+    image_id: str,
+    visual_description: dict[str, Any],
+    user_name: str = "User",
+) -> dict[str, Any]:
+    """Update user-reviewed visual description for an image asset."""
     images = load_image_assets(brief_id)
     target = next((img for img in images if img.get("image_id") == image_id), None)
     if not target:
         raise ValueError(f"Image asset '{image_id}' not found in brief '{brief_id}'.")
 
-    if not target.get("file_path") and target.get("provider") != "CHATGPT_DIRECT":
-        raise ValueError("Cannot approve image: No image file has been imported or generated yet.")
+    if "visual_description" not in target or not isinstance(target["visual_description"], dict):
+        target["visual_description"] = {}
 
-    return set_image_approval_status(
+    target["visual_description"].update(visual_description)
+    target["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    save_image_assets(brief_id, images)
+
+    record_audit_event(
         brief_id=brief_id,
-        image_id=image_id,
-        new_status=ApprovalStatus.APPROVED,
-        reason="Image visually inspected and approved.",
-        user_name=user_name,
+        stage="STAGE_4_IMAGES",
+        action="VISUAL_DESCRIPTION_UPDATED",
+        asset_id=image_id,
+        details=f"Visual description updated and aligned by {user_name} for {image_id}.",
     )
+    return target
 
 
-def approve_image_in_chatgpt(brief_id: str, image_id: str, user_name: str = "User") -> dict:
-    """Approve an image generated, reviewed, and approved directly by the user in ChatGPT."""
+def approve_image(
+    brief_id: str,
+    image_id: str,
+    visual_description: dict[str, Any] | None = None,
+    user_name: str = "User",
+) -> dict[str, Any]:
+    """Approve a reviewed image. Strictly requires an actual uploaded image file verified on disk."""
     images = load_image_assets(brief_id)
     target = next((img for img in images if img.get("image_id") == image_id), None)
     if not target:
         raise ValueError(f"Image asset '{image_id}' not found in brief '{brief_id}'.")
 
-    target["provider"] = "CHATGPT_DIRECT"
-    target["approval_method"] = "CHATGPT_DIRECT"
-    target["approval_status"] = ApprovalStatus.APPROVED.value
-    target["approved_in_chatgpt_at"] = datetime.now(timezone.utc).isoformat()
+    # Strict check: Image MUST be uploaded and verified on disk
+    file_rel = target.get("file_path")
+    if not file_rel:
+        raise ValueError(f"Cannot approve {image_id}: Upload the actual generated image file first.")
+
+    full_path = (PROJECT_DIR / file_rel).resolve()
+    if not full_path.is_file():
+        raise ValueError(f"Cannot approve {image_id}: Image file not found on disk at '{file_rel}'. Please re-upload.")
+
+    if visual_description:
+        if "visual_description" not in target or not isinstance(target["visual_description"], dict):
+            target["visual_description"] = {}
+        target["visual_description"].update(visual_description)
+
+    target["approved_at"] = datetime.now(timezone.utc).isoformat()
     target["updated_at"] = datetime.now(timezone.utc).isoformat()
     save_image_assets(brief_id, images)
 
@@ -209,26 +261,13 @@ def approve_image_in_chatgpt(brief_id: str, image_id: str, user_name: str = "Use
         brief_id=brief_id,
         image_id=image_id,
         new_status=ApprovalStatus.APPROVED,
-        reason="Image generated, reviewed, and approved directly in ChatGPT by user.",
+        reason="Visual inspection and garment details reviewed and approved by user.",
         user_name=user_name,
     )
 
 
-def approve_all_images_in_chatgpt(brief_id: str, user_name: str = "User") -> list[dict]:
-    """Approve all image assets for a brief in ChatGPT-Direct mode."""
-    images = load_image_assets(brief_id)
-    if not images:
-        raise ValueError(f"No image prompts found for brief '{brief_id}'. Prepare image prompts first.")
-
-    updated = []
-    for img in images:
-        res = approve_image_in_chatgpt(brief_id, img["image_id"], user_name=user_name)
-        updated.append(res)
-    return updated
-
-
 def reject_image(brief_id: str, image_id: str, reason: str, user_name: str = "User") -> dict:
-    """Reject an image with feedback."""
+    """Reject an image with feedback and invalidate downstream assets."""
     return set_image_approval_status(
         brief_id=brief_id,
         image_id=image_id,
