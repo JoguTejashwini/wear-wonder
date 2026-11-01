@@ -7,6 +7,7 @@ from app.storage import (
     load_outfits,
     load_image_assets,
     load_video_assets,
+    load_publishing_record,
     save_or_update_brief,
     save_outfits,
     save_image_assets,
@@ -24,6 +25,7 @@ class WorkflowStage(str, Enum):
     STAGE_4_IMAGES = "STAGE_4_IMAGES"
     STAGE_5_VIDEOS = "STAGE_5_VIDEOS"
     STAGE_6_READY = "STAGE_6_READY"
+    STAGE_6_PUBLISHING = "STAGE_6_PUBLISHING"
 
 
 class ApprovalStatus(str, Enum):
@@ -31,6 +33,8 @@ class ApprovalStatus(str, Enum):
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"
     REVISION_REQUESTED = "REVISION_REQUESTED"
+    SCHEDULED = "SCHEDULED"
+    PUBLISHED = "PUBLISHED"
 
 
 def get_workflow_prerequisites(brief_id: str) -> dict[str, bool]:
@@ -48,6 +52,8 @@ def get_workflow_prerequisites(brief_id: str) -> dict[str, bool]:
             "videos_generated": False,
             "videos_approved": False,
             "stage_6_ready": False,
+            "has_assembled_video": False,
+            "is_published_or_scheduled": False,
         }
 
     research_status = brief.get("research_status", "PENDING")
@@ -95,6 +101,10 @@ def get_workflow_prerequisites(brief_id: str) -> dict[str, bool]:
         and videos_approved
     )
 
+    pub_rec = load_publishing_record(brief_id)
+    has_assembled_video = bool(pub_rec and pub_rec.get("video_file_path") and (PROJECT_DIR / pub_rec["video_file_path"]).is_file())
+    is_published_or_scheduled = bool(pub_rec and pub_rec.get("status") in ("SCHEDULED", "PUBLISHED"))
+
     return {
         "has_brief": True,
         "research_completed": research_completed,
@@ -106,6 +116,8 @@ def get_workflow_prerequisites(brief_id: str) -> dict[str, bool]:
         "videos_generated": len(videos) > 0,
         "videos_approved": videos_approved,
         "stage_6_ready": stage_6_ready,
+        "has_assembled_video": has_assembled_video,
+        "is_published_or_scheduled": is_published_or_scheduled,
     }
 
 
@@ -134,10 +146,10 @@ def can_proceed_to_stage(brief_id: str, stage: WorkflowStage) -> tuple[bool, str
             return False, "All outfit images must be approved before generating video prompts and clips."
         return True, "Ready for video studio."
 
-    if stage == WorkflowStage.STAGE_6_READY:
+    if stage in (WorkflowStage.STAGE_6_READY, WorkflowStage.STAGE_6_PUBLISHING):
         if not prereqs["stage_6_ready"]:
             return False, "All clips, images, and outfits must be approved before video editing assembly."
-        return True, "All assets approved. Ready for Stage 6 Editing & Assembly."
+        return True, "All assets approved. Ready for Stage 6 Publishing & Scheduling."
 
     return True, "Permitted."
 

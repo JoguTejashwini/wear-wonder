@@ -37,6 +37,18 @@ from app.model_library import (
     set_model_approval,
 )
 from app.research import execute_fashion_research
+from app.publishing import (
+    approve_and_schedule_video,
+    check_instagram_auth_status,
+    check_youtube_auth_status,
+    get_or_create_publishing_record,
+    import_assembled_video,
+    import_custom_thumbnail,
+    record_manual_publication,
+    refresh_publishing_metadata,
+    set_master_image_as_thumbnail,
+    update_publishing_metadata,
+)
 from app.storage import (
     get_brief_by_id,
     get_research_data,
@@ -44,6 +56,7 @@ from app.storage import (
     load_audit_events,
     load_image_assets,
     load_outfits,
+    load_publishing_record,
     load_video_assets,
 )
 from app.styling import (
@@ -146,23 +159,34 @@ with st.sidebar:
             prereqs["videos_approved"],
             "APPROVED" if prereqs["videos_approved"] else ("GENERATED" if prereqs["videos_generated"] else "PENDING"),
         )
+        pub_rec = load_publishing_record(active_brief_id)
+        pub_status = pub_rec.get("status") if pub_rec else "PENDING"
+        is_published = pub_status in ("SCHEDULED", "PUBLISHED")
+        status_pill(
+            "6. Publishing",
+            is_published,
+            pub_status if is_published else ("READY" if prereqs["stage_6_ready"] else "LOCKED"),
+        )
 
         st.divider()
-        if prereqs["stage_6_ready"]:
-            st.success("🎉 All assets approved! Ready for Stage 6: Video Editing.")
+        if is_published:
+            st.success(f"🚀 Video is {pub_status} across platforms!")
+        elif prereqs["stage_6_ready"]:
+            st.success("🎉 All assets approved! Ready for Stage 6: Video Editing & Publishing.")
         else:
-            st.info("🔒 Stage 6 Editing locked until all clips are approved.")
+            st.info("🔒 Stage 6 Publishing locked until all clips are approved.")
 
 
 # --------------------------------------------------
 # MAIN WORKSPACE TABS
 # --------------------------------------------------
-tab_idea, tab_research, tab_outfits, tab_images, tab_videos, tab_models, tab_status = st.tabs([
+tab_idea, tab_research, tab_outfits, tab_images, tab_videos, tab_publishing, tab_models, tab_status = st.tabs([
     "💡 Idea Studio",
     "🔎 Research",
     "👗 Outfit Proposals",
     "📸 Image Studio",
     "🎬 Video Studio",
+    "🚀 Stage 6: Publishing",
     "👤 Master Models",
     "📊 Workflow Status",
 ])
@@ -1039,7 +1063,464 @@ with tab_videos:
 
 
 # --------------------------------------------------
-# TAB 6: MASTER MODEL LIBRARY (Preserved)
+# TAB 6: STAGE 6: PUBLISHING & SCHEDULING STUDIO
+# --------------------------------------------------
+with tab_publishing:
+    st.subheader("Stage 6: Publishing & Scheduling Studio")
+    st.write(
+        "Upload your final assembled 9:16 vertical Short/Reel, review platform-optimized titles, "
+        "descriptions with timestamps, and schedule via official APIs or the 1-Click Publishing Kit."
+    )
+
+    if not active_brief_id:
+        st.info("Select or create a brief to access Stage 6 Publishing.")
+    else:
+        prereqs = get_workflow_prerequisites(active_brief_id)
+        pub_rec = get_or_create_publishing_record(active_brief_id)
+
+        if not prereqs["stage_6_ready"]:
+            st.warning(
+                "🔒 **Prerequisite Gate Notice**: Stages 1–5 have pending approvals. "
+                "You can upload your assembled video and preview draft metadata now, "
+                "but publishing/scheduling requires all earlier stage assets to be approved."
+            )
+        else:
+            st.success("✨ **Prerequisite Gates Cleared**: All outfits, images, and clips are approved! Ready for publishing.")
+
+        # --- Section 1: Final Video & Thumbnail Intake ---
+        st.markdown("### 1. Final Assembled Video & Custom Thumbnail")
+        st.caption("Upload your stitched 9:16 vertical video and select or upload a high-resolution thumbnail.")
+
+        col_vid_box, col_thumb_box = st.columns([1, 1])
+
+        # Left Column: Assembled Video
+        with col_vid_box:
+            st.markdown("#### 🎬 Assembled Video (9:16 Short / Reel)")
+            vid_path = pub_rec.get("video_file_path")
+
+            if vid_path:
+                full_vp = (PROJECT_DIR / vid_path).resolve()
+                if full_vp.is_file():
+                    st.video(str(full_vp))
+                    st.caption(f"📁 **File:** `{pub_rec.get('video_filename')}` · **Size:** {pub_rec.get('video_filesize', 0) / (1024 * 1024):.2f} MB")
+                else:
+                    st.warning(f"Video file missing on disk at: `{vid_path}`")
+            else:
+                st.info("No assembled video uploaded yet. Stitched Google Flow clips can be uploaded below:")
+
+            uploaded_assembled = st.file_uploader(
+                "Upload Assembled Video (.mp4, .mov, .webm)",
+                type=["mp4", "mov", "webm"],
+                key=f"upload_assembled_{active_brief_id}",
+            )
+            if uploaded_assembled:
+                if st.button("💾 Save Assembled Video", type="primary", key="btn_save_assembled_vid"):
+                    import_assembled_video(
+                        brief_id=active_brief_id,
+                        video_bytes=uploaded_assembled.getvalue(),
+                        filename=uploaded_assembled.name,
+                    )
+                    st.success("Assembled video saved successfully!")
+                    st.rerun()
+
+        # Right Column: Thumbnail / Cover
+        with col_thumb_box:
+            st.markdown("#### 🖼️ Cover / Thumbnail (9:16 Vertical)")
+            thumb_path = pub_rec.get("thumbnail_file_path")
+
+            if thumb_path:
+                full_tp = (PROJECT_DIR / thumb_path).resolve()
+                if full_tp.is_file():
+                    st.image(str(full_tp), caption=f"Thumbnail ({pub_rec.get('thumbnail_source', 'Custom')})", use_container_width=True)
+                else:
+                    st.warning(f"Thumbnail file missing at `{thumb_path}`")
+            else:
+                st.info("No thumbnail selected yet. Choose an approved Stage 4 image or upload a custom cover.")
+
+            thumb_tab_stage4, thumb_tab_custom = st.tabs(["Select Stage 4 Approved Image", "Upload Custom Cover"])
+
+            with thumb_tab_stage4:
+                stage4_images = [
+                    img for img in load_image_assets(active_brief_id)
+                    if img.get("approval_status") == ApprovalStatus.APPROVED.value
+                    and img.get("file_path")
+                    and (PROJECT_DIR / img["file_path"]).is_file()
+                ]
+                if stage4_images:
+                    img_opts = {f"{img.get('image_id')} ({img.get('character_name', 'Model')}) - {img.get('outfit_id')}": img.get("image_id") for img in stage4_images}
+                    selected_img_label = st.selectbox("Choose Approved Look Image", list(img_opts.keys()), key="select_s4_thumb")
+                    if st.button("Use Stage 4 Image as Thumbnail", key="btn_set_s4_thumb", use_container_width=True):
+                        set_master_image_as_thumbnail(active_brief_id, img_opts[selected_img_label])
+                        st.success("Stage 4 approved image set as video thumbnail!")
+                        st.rerun()
+                else:
+                    st.caption("No approved Stage 4 images with files on disk found. Upload and approve images in Stage 4 first, or upload custom cover.")
+
+            with thumb_tab_custom:
+                uploaded_thumb = st.file_uploader(
+                    "Upload Custom Cover (.png, .jpg, .webp)",
+                    type=["png", "jpg", "jpeg", "webp"],
+                    key=f"upload_custom_thumb_{active_brief_id}",
+                )
+                if uploaded_thumb:
+                    if st.button("💾 Save Custom Thumbnail", key="btn_save_custom_thumb", use_container_width=True):
+                        import_custom_thumbnail(
+                            brief_id=active_brief_id,
+                            image_bytes=uploaded_thumb.getvalue(),
+                            filename=uploaded_thumb.name,
+                        )
+                        st.success("Custom thumbnail saved!")
+                        st.rerun()
+
+        st.divider()
+
+        # --- Section 2: Platform Metadata Studio ---
+        st.markdown("### 2. Platform-Specific Titles, Descriptions & SEO Tags")
+        st.caption("Auto-generated based on project brief, character dialogue, approved styling, and multi-look timestamps.")
+
+        col_meta_top, col_meta_btn = st.columns([3, 1])
+        with col_meta_btn:
+            if st.button("🔄 Regenerate Metadata", key="btn_refresh_publishing_meta", use_container_width=True):
+                refresh_publishing_metadata(active_brief_id)
+                st.success("Metadata regenerated from latest outfits!")
+                st.rerun()
+
+        meta = pub_rec.get("metadata", {})
+        yt_meta = meta.get("youtube", {})
+        ig_meta = meta.get("instagram", {})
+
+        meta_tab_yt, meta_tab_ig = st.tabs(["🔴 YouTube Shorts Metadata", "📸 Instagram Reels Metadata"])
+
+        with meta_tab_yt:
+            with st.form("form_yt_metadata"):
+                curr_yt_title = yt_meta.get("title", "")
+                yt_title_input = st.text_input(
+                    f"Title (Characters: {len(curr_yt_title)}/70 — must end with #Shorts)",
+                    value=curr_yt_title,
+                )
+                curr_yt_desc = yt_meta.get("description", "")
+                yt_desc_input = st.text_area(
+                    "Description & Multi-Look Timestamps",
+                    value=curr_yt_desc,
+                    height=240,
+                )
+                curr_yt_tags = yt_meta.get("tags_comma_separated", ", ".join(yt_meta.get("tags", [])))
+                yt_tags_input = st.text_area(
+                    f"Search Tags (Characters: {len(curr_yt_tags)}/500)",
+                    value=curr_yt_tags,
+                    height=80,
+                )
+                st.caption("Category: **26 — Howto & Style** (Automatic)")
+
+                if st.form_submit_button("💾 Save YouTube Metadata", type="primary"):
+                    clean_tags = [t.strip() for t in yt_tags_input.split(",") if t.strip()]
+                    update_publishing_metadata(
+                        active_brief_id,
+                        "youtube",
+                        {
+                            "title": yt_title_input,
+                            "description": yt_desc_input,
+                            "tags": clean_tags,
+                            "tags_comma_separated": yt_tags_input,
+                        },
+                    )
+                    st.success("YouTube metadata updated!")
+                    st.rerun()
+
+        with meta_tab_ig:
+            with st.form("form_ig_metadata"):
+                curr_ig_caption = ig_meta.get("caption", "")
+                ig_caption_input = st.text_area(
+                    "Instagram Caption (Hook + Look Breakdown + CTA)",
+                    value=curr_ig_caption,
+                    height=240,
+                )
+                curr_ig_hashtags = ig_meta.get("hashtags_text", " ".join(ig_meta.get("hashtags", [])))
+                ig_hashtags_input = st.text_area(
+                    "Curated Hashtags (Tiered: Niche, Trending & Format)",
+                    value=curr_ig_hashtags,
+                    height=90,
+                )
+
+                if st.form_submit_button("💾 Save Instagram Metadata", type="primary"):
+                    clean_hts = [h.strip() for h in ig_hashtags_input.split() if h.strip()]
+                    update_publishing_metadata(
+                        active_brief_id,
+                        "instagram",
+                        {
+                            "caption": ig_caption_input,
+                            "hashtags": clean_hts,
+                            "hashtags_text": ig_hashtags_input,
+                        },
+                    )
+                    st.success("Instagram metadata updated!")
+                    st.rerun()
+
+        st.divider()
+
+        # --- Section 3: Scheduling & Dispatch Controls ---
+        st.markdown("### 3. Scheduling & Privacy Settings")
+        col_plat, col_time = st.columns([1, 1])
+
+        with col_plat:
+            st.markdown("#### Destination Platforms")
+            yt_checked = st.checkbox("YouTube Shorts", value=True, key="chk_yt")
+            ig_checked = st.checkbox("Instagram Reels", value=True, key="chk_ig")
+
+            privacy_status = st.selectbox(
+                "YouTube Visibility",
+                ["private", "public", "unlisted"],
+                index=0,
+                format_func=lambda s: s.capitalize() + (" (Required for scheduled publishing)" if s == "private" else ""),
+                key="sel_privacy_status",
+            )
+
+        with col_time:
+            st.markdown("#### Publication Timing")
+            timing_choice = st.radio(
+                "Choose when to publish:",
+                ["Schedule for Later", "Publish Immediately"],
+                key="rad_timing_choice",
+            )
+
+            scheduled_iso_str = None
+            if timing_choice == "Schedule for Later":
+                now_plus_day = datetime.now() + timedelta(days=1)
+                sched_date = st.date_input("Scheduled Date", value=now_plus_day.date(), min_value=datetime.now().date(), key="date_sched")
+                sched_time = st.time_input("Scheduled Time (Local)", value=datetime.strptime("18:00", "%H:%M").time(), key="time_sched")
+                combined_local = datetime.combine(sched_date, sched_time)
+                # Convert to UTC ISO string
+                scheduled_iso_str = combined_local.astimezone(timezone.utc).isoformat()
+                st.info(f"📅 **Scheduled for:** {combined_local.strftime('%B %d, %Y at %I:%M %p')} Local (`{scheduled_iso_str}` UTC)")
+
+        st.divider()
+
+        # --- Section 4: Mandatory Approval Gate & API Dispatch ---
+        st.markdown("### 4. Mandatory Approval Gate & API Publishing")
+        st.caption("Wear & Wonder strictly requires explicit authorization before initiating any platform publication.")
+
+        yt_auth = check_youtube_auth_status()
+        ig_auth = check_instagram_auth_status()
+
+        col_auth1, col_auth2 = st.columns(2)
+        with col_auth1:
+            if yt_auth["configured"]:
+                st.success(f"🟢 **YouTube API Ready:** {yt_auth['details']}")
+            else:
+                st.info(f"ℹ️ **YouTube API:** {yt_auth['details']}")
+
+        with col_auth2:
+            if ig_auth["configured"]:
+                st.success(f"🟢 **Instagram API Ready:** {ig_auth['details']}")
+            else:
+                st.info(f"ℹ️ **Instagram API:** {ig_auth['details']}")
+
+        has_video = bool(pub_rec.get("video_file_path") and (PROJECT_DIR / pub_rec["video_file_path"]).is_file())
+
+        if not has_video:
+            st.error("⚠️ **Gate Blocked**: Please upload an assembled video above before scheduling.")
+        elif not prereqs["stage_6_ready"]:
+            st.warning("⚠️ **Gate Warning**: Stages 1–5 have unapproved assets. Review and approve earlier stages to unlock publishing.")
+
+        gate_confirmed = st.checkbox(
+            "✅ **Mandatory Creator Approval**: I have reviewed the assembled video, custom thumbnail, "
+            "dialogue lip-sync, and platform-tailored metadata with multi-look timestamps, and I authorize "
+            "Wear & Wonder to schedule/publish this content.",
+            key="chk_mandatory_gate",
+            disabled=not has_video,
+        )
+
+        col_btn_api, col_btn_test = st.columns([2, 1])
+
+        target_platforms = []
+        if yt_checked:
+            target_platforms.append("youtube")
+        if ig_checked:
+            target_platforms.append("instagram")
+
+        with col_btn_api:
+            btn_publish = st.button(
+                "🚀 Approve & Publish / Schedule via API",
+                type="primary",
+                disabled=not (gate_confirmed and target_platforms),
+                use_container_width=True,
+                key="btn_run_api_publish",
+            )
+            if btn_publish:
+                try:
+                    res = approve_and_schedule_video(
+                        brief_id=active_brief_id,
+                        platforms=target_platforms,
+                        scheduled_time_iso=scheduled_iso_str,
+                        privacy_status=privacy_status,
+                        user_name="Creator",
+                        mock_mode=False,
+                    )
+                    st.success(f"🎉 Success! Video has been {res.get('status')} across {', '.join(target_platforms)}!")
+                    st.rerun()
+                except RuntimeError as exc:
+                    st.error(f"Platform API Error: {exc}")
+                    st.info("💡 You can use the Zero-Setup 1-Click Publishing Kit below immediately with ₹0 and no configuration!")
+                except Exception as exc:
+                    st.error(f"Error: {exc}")
+
+        with col_btn_test:
+            btn_test_sim = st.button(
+                "🧪 Test Integration (Sandbox Dispatch)",
+                disabled=not (gate_confirmed and target_platforms),
+                use_container_width=True,
+                key="btn_test_sandbox",
+            )
+            if btn_test_sim:
+                try:
+                    res = approve_and_schedule_video(
+                        brief_id=active_brief_id,
+                        platforms=target_platforms,
+                        scheduled_time_iso=scheduled_iso_str,
+                        privacy_status=privacy_status,
+                        user_name="Creator",
+                        mock_mode=True,
+                    )
+                    st.success(f"🧪 Sandbox Verified! Simulated {res.get('status')} across {', '.join(target_platforms)}.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(str(exc))
+
+        st.divider()
+
+        # --- Section 5: Zero-Setup 1-Click Publishing Kit (Mode B) ---
+        with st.container(border=True):
+            st.markdown("### ⚡ Zero-Setup 1-Click Publishing Kit (Instant ₹0 / No Developer Setup)")
+            st.write(
+                "Don't want to configure Google Cloud or Meta developer consoles? "
+                "You can publish right now for ₹0 using official web studios with our 1-click formatted kits:"
+            )
+
+            col_kit_yt, col_kit_ig = st.columns(2)
+
+            with col_kit_yt:
+                st.markdown("#### 🔴 YouTube Studio Kit")
+                st.caption("1. Copy pre-formatted title, description with timestamps, and tags.\n2. Click button to open YouTube Studio upload dialog directly.")
+
+                st.markdown("**Title:**")
+                st.code(yt_meta.get("title", ""), language="text")
+
+                st.markdown("**Description & Timestamps:**")
+                st.code(yt_meta.get("description", ""), language="text")
+
+                st.markdown("**SEO Search Tags:**")
+                st.code(yt_meta.get("tags_comma_separated", ""), language="text")
+
+                if vid_path and (PROJECT_DIR / vid_path).is_file():
+                    with open(PROJECT_DIR / vid_path, "rb") as f_dl:
+                        st.download_button(
+                            "📥 Download Assembled Video (.mp4)",
+                            data=f_dl.read(),
+                            file_name=pub_rec.get("video_filename", "video.mp4"),
+                            mime="video/mp4",
+                            key="dl_pub_video_yt",
+                            use_container_width=True,
+                        )
+
+                if thumb_path and (PROJECT_DIR / thumb_path).is_file():
+                    with open(PROJECT_DIR / thumb_path, "rb") as f_tp:
+                        st.download_button(
+                            "📥 Download Thumbnail Cover",
+                            data=f_tp.read(),
+                            file_name=Path(thumb_path).name,
+                            mime="image/png",
+                            key="dl_pub_thumb_yt",
+                            use_container_width=True,
+                        )
+
+                st.link_button(
+                    "🔗 Open YouTube Studio Upload",
+                    "https://studio.youtube.com/channel/UC/videos/upload?d=pt",
+                    type="primary",
+                    use_container_width=True,
+                )
+
+            with col_kit_ig:
+                st.markdown("#### 📸 Meta Business Suite Kit")
+                st.caption("1. Copy pre-formatted aesthetic caption & curated hashtags.\n2. Click button to open Meta Business Suite Reels composer directly.")
+
+                st.markdown("**Instagram Caption & Hashtags:**")
+                st.code(ig_meta.get("caption", ""), language="text")
+
+                if vid_path and (PROJECT_DIR / vid_path).is_file():
+                    with open(PROJECT_DIR / vid_path, "rb") as f_dl_ig:
+                        st.download_button(
+                            "📥 Download Assembled Reel (.mp4)",
+                            data=f_dl_ig.read(),
+                            file_name=pub_rec.get("video_filename", "reel.mp4"),
+                            mime="video/mp4",
+                            key="dl_pub_video_ig",
+                            use_container_width=True,
+                        )
+
+                st.link_button(
+                    "🔗 Open Meta Business Suite Reels Composer",
+                    "https://business.facebook.com/latest/reels_composer",
+                    type="primary",
+                    use_container_width=True,
+                )
+
+            st.divider()
+            with st.expander("📝 Record Manual Publication in Audit Log", expanded=False):
+                st.write("If you uploaded or scheduled directly through YouTube Studio or Meta Business Suite, record your live link here:")
+                with st.form("form_manual_record"):
+                    man_plat = st.selectbox("Platform", ["YouTube", "Instagram"], key="man_plat")
+                    man_url = st.text_input("Live or Scheduled URL", placeholder="https://youtube.com/shorts/... or https://instagram.com/reel/...")
+                    man_notes = st.text_input("Notes", placeholder="e.g. Scheduled for Friday 6 PM via YouTube Studio")
+                    if st.form_submit_button("Record Manual Publication", type="primary"):
+                        if man_url.strip():
+                            record_manual_publication(
+                                brief_id=active_brief_id,
+                                platform=man_plat,
+                                live_url=man_url.strip(),
+                                notes=man_notes,
+                            )
+                            st.success(f"Recorded {man_plat} publication!")
+                            st.rerun()
+                        else:
+                            st.error("Please provide a valid URL.")
+
+        st.divider()
+
+        # --- Section 6: Live Platform Status & Verification ---
+        st.markdown("### 5. Live Platform Status & Verification")
+        p_stat = pub_rec.get("platforms_status", {})
+        yt_p = p_stat.get("youtube", {})
+        ig_p = p_stat.get("instagram", {})
+
+        col_stat_yt, col_stat_ig = st.columns(2)
+        with col_stat_yt:
+            with st.container(border=True):
+                st.markdown("#### 🔴 YouTube Shorts Status")
+                st.write(f"**Status:** `{yt_p.get('status', 'PENDING')}`")
+                if yt_p.get("url"):
+                    st.markdown(f"**Live URL:** [{yt_p.get('url')}]({yt_p.get('url')})")
+                    st.caption(f"Video ID: `{yt_p.get('video_id')}`")
+                if yt_p.get("scheduled_time"):
+                    st.caption(f"📅 Scheduled Time: `{yt_p.get('scheduled_time')}`")
+                if yt_p.get("published_at"):
+                    st.caption(f"Published At: `{yt_p.get('published_at')[:19].replace('T', ' ')}`")
+
+        with col_stat_ig:
+            with st.container(border=True):
+                st.markdown("#### 📸 Instagram Reels Status")
+                st.write(f"**Status:** `{ig_p.get('status', 'PENDING')}`")
+                if ig_p.get("permalink"):
+                    st.markdown(f"**Live URL:** [{ig_p.get('permalink')}]({ig_p.get('permalink')})")
+                    st.caption(f"Media ID: `{ig_p.get('media_id')}`")
+                if ig_p.get("scheduled_time"):
+                    st.caption(f"📅 Scheduled Time: `{ig_p.get('scheduled_time')}`")
+                if ig_p.get("published_at"):
+                    st.caption(f"Published At: `{ig_p.get('published_at')[:19].replace('T', ' ')}`")
+
+
+# --------------------------------------------------
+# TAB 7: MASTER MODEL LIBRARY (Preserved)
 # --------------------------------------------------
 with tab_models:
     st.subheader("Master Model Library")
@@ -1194,7 +1675,7 @@ with tab_status:
 
         # Pipeline visualizer
         st.markdown("### Pipeline Gate Matrix")
-        c1, c2, c3, c4, c5 = st.columns(5)
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
         with c1:
             st.metric("1. Idea Brief", "COMPLETED", delta="Ready")
         with c2:
@@ -1209,13 +1690,17 @@ with tab_status:
         with c5:
             vid_val = "APPROVED" if prereqs["videos_approved"] else ("DONE" if prereqs["videos_generated"] else "PENDING")
             st.metric("5. Video Clips", vid_val, delta="Ready" if prereqs["videos_approved"] else "Gate Lock")
+        with c6:
+            pub_rec = load_publishing_record(active_brief_id)
+            pub_val = pub_rec.get("status", "DRAFT") if pub_rec else "PENDING"
+            st.metric("6. Publishing", pub_val, delta="Live" if pub_val in ("SCHEDULED", "PUBLISHED") else "Gate Lock")
 
         st.divider()
 
         if prereqs["stage_6_ready"]:
-            st.success("✨ ALL PREREQUISITES MET. Brief is certified and ready for Stage 6: Video Editing & Assembly.")
+            st.success("✨ ALL PREREQUISITES MET. Brief is certified and ready for Stage 6: Video Editing & Publishing.")
         else:
-            st.warning("⚠️ Pending approvals required before video editing assembly.")
+            st.warning("⚠️ Pending approvals required before video editing assembly and publishing.")
 
         # Audit history log
         st.markdown("### Workflow Audit Trail")
@@ -1238,4 +1723,4 @@ with tab_status:
 # FOOTER
 # --------------------------------------------------
 st.divider()
-st.caption("Wear & Wonder · Multi-Stage Fashion Content Automation · Stages 1–5 Complete · Approval Required")
+st.caption("Wear & Wonder · Multi-Stage Fashion Content Automation · Stages 1–6 (Publishing & Scheduling) · Approval Required")

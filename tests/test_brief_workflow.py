@@ -35,6 +35,11 @@ from app.video_generation.video_service import (
     import_generated_video,
     prepare_video_prompts,
 )
+from app.publishing import (
+    import_assembled_video,
+    set_master_image_as_thumbnail,
+    approve_and_schedule_video,
+)
 
 
 class MockInteraction:
@@ -275,7 +280,7 @@ class TestBriefWorkflow(unittest.TestCase):
                 approve_video_clip(brief_id, vid["clip_id"], user_name="Test Fashion Lead")
 
             # ----------------------------------------------------
-            # FINAL STAGE GATE CHECK: Stage 6 Editing Readiness
+            # STAGE 6: Video Assembly, Approval & Publishing
             # ----------------------------------------------------
             prereqs = get_workflow_prerequisites(brief_id)
             self.assertTrue(prereqs["videos_approved"])
@@ -284,6 +289,37 @@ class TestBriefWorkflow(unittest.TestCase):
             can_p, msg = can_proceed_to_stage(brief_id, WorkflowStage.STAGE_6_READY)
             self.assertTrue(can_p)
             self.assertIn("Ready for Stage 6", msg)
+
+            can_p_pub, _ = can_proceed_to_stage(brief_id, WorkflowStage.STAGE_6_PUBLISHING)
+            self.assertTrue(can_p_pub)
+
+            # Ingest final assembled video and select approved look as thumbnail
+            assembled_mp4 = b"\x00\x00\x00\x18ftypmp42assembledverticalshort"
+            pub_record = import_assembled_video(brief_id, assembled_mp4, "assembled_lookbook_short.mp4")
+            self.assertIsNotNone(pub_record["video_file_path"])
+
+            thumb_record = set_master_image_as_thumbnail(brief_id, img_assets[0]["image_id"])
+            self.assertIsNotNone(thumb_record["thumbnail_file_path"])
+
+            # Execute final mandatory approval and scheduled dispatch
+            future_iso = "2026-11-10T14:30:00Z"
+            dispatched_record = approve_and_schedule_video(
+                brief_id=brief_id,
+                platforms=["youtube", "instagram"],
+                scheduled_time_iso=future_iso,
+                privacy_status="private",
+                user_name="Lead Editor",
+                mock_mode=True,
+            )
+
+            self.assertEqual(dispatched_record["status"], "SCHEDULED")
+            self.assertTrue(dispatched_record["platforms_status"]["youtube"]["url"].startswith("https://youtube.com/shorts/"))
+            self.assertTrue(dispatched_record["platforms_status"]["instagram"]["permalink"].startswith("https://www.instagram.com/reel/"))
+
+            # Check prerequisites now reflect published/scheduled state
+            prereqs_final = get_workflow_prerequisites(brief_id)
+            self.assertTrue(prereqs_final["has_assembled_video"])
+            self.assertTrue(prereqs_final["is_published_or_scheduled"])
 
 
 if __name__ == "__main__":

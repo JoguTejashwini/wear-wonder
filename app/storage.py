@@ -12,7 +12,11 @@ OUTFITS_FILE = DATA_DIR / "outfits.json"
 RESEARCH_SOURCES_FILE = DATA_DIR / "research_sources.json"
 IMAGE_ASSETS_FILE = DATA_DIR / "image_assets.json"
 VIDEO_ASSETS_FILE = DATA_DIR / "video_assets.json"
+PUBLISHING_RECORDS_FILE = DATA_DIR / "publishing_records.json"
 AUDIT_LOG_FILE = DATA_DIR / "workflow_audit.json"
+
+PUBLISHED_VIDEOS_DIR = PROJECT_DIR / "assets" / "published_videos"
+PUBLISHED_THUMBNAILS_DIR = PROJECT_DIR / "assets" / "published_thumbnails"
 
 
 def _atomic_write_json(file_path: Path, data: Any) -> None:
@@ -268,3 +272,27 @@ def load_audit_events(brief_id: str) -> list[dict]:
     """Retrieve all audit events for a brief."""
     all_logs = _read_json_dict(AUDIT_LOG_FILE)
     return all_logs.get(brief_id, [])
+
+
+# ---------------------------------------------------------------------------
+# Publishing & Scheduling Records (data/publishing_records.json)
+# ---------------------------------------------------------------------------
+
+def load_all_publishing_records() -> dict[str, dict]:
+    """Load all publishing records mapped by brief_id."""
+    return _read_json_dict(PUBLISHING_RECORDS_FILE)
+
+
+def load_publishing_record(brief_id: str) -> dict | None:
+    """Retrieve the publishing and scheduling record for a specific brief."""
+    all_records = load_all_publishing_records()
+    return all_records.get(brief_id)
+
+
+def save_publishing_record(brief_id: str, record: dict) -> None:
+    """Save or update the publishing and scheduling record for a specific brief."""
+    all_records = load_all_publishing_records()
+    record["updated_at"] = datetime.now(timezone.utc).isoformat()
+    all_records[brief_id] = record
+    _atomic_write_json(PUBLISHING_RECORDS_FILE, all_records)
+
