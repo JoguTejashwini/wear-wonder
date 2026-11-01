@@ -75,11 +75,31 @@ def build_image_prompt_for_outfit(outfit: dict[str, Any], character_id: str) -> 
         "missing fingers, mutated limbs, cropped shoes, cut off feet, distorted garments, logos, watermark, text, low resolution"
     )
 
+    # Tailored multi-modal prompt specifically formatted for ChatGPT web with reference image attachment
+    chatgpt_prompt = (
+        f"Please reference the attached master model reference image for {char_profile['display_name']} ({character_id}). "
+        f"Strictly maintain her exact facial structure, facial features, eye shape, nose, lips, jawline, skin tone, "
+        f"facial proportions, hairline, and hair styling rules: {char_profile['hair_rules']}. "
+        f"Do not redesign or alter her facial identity. "
+        f"Generate a full-body vertical fashion editorial photograph (9:16 aspect ratio) of her wearing this look: "
+        f"Outfit Title: {title}. "
+        f"Garments: {descriptions}. "
+        f"Colour Palette: {colours}. "
+        f"Fabrics & Textures: {fabrics}. "
+        f"Silhouette: {silhouette}. "
+        f"Footwear: {footwear}. "
+        f"Accessories: {accessories}. "
+        f"Setting & Atmosphere: {occasion}, clean neutral contemporary studio backdrop with soft diffused commercial daylight. "
+        f"Framing: Full-length vertical portrait showing head to toe with complete footwear visible. "
+        f"Photographic quality: authentic skin texture, realistic hands, razor-sharp garment drape."
+    )
+
     return {
         "character_id": character_id,
         "character_name": char_profile["display_name"],
         "reference_image": char_profile["reference_image_path"],
         "prompt_text": prompt_text,
+        "chatgpt_prompt": chatgpt_prompt,
         "negative_prompt": negative_prompt,
         "aspect_ratio": "9:16",
         "guidance_scale": 7.5,

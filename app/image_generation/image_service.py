@@ -59,6 +59,7 @@ def prepare_image_prompts(brief_id: str) -> list[dict[str, Any]]:
         # Preserve existing imported image file path if present and unchanged
         file_path = existing.get("file_path") if existing else None
         approval_status = existing.get("approval_status") if existing else ApprovalStatus.PENDING.value
+        provider = existing.get("provider") if existing else "CHATGPT_OR_LOCAL"
 
         asset_record: dict[str, Any] = {
             "image_id": image_id,
@@ -69,7 +70,7 @@ def prepare_image_prompts(brief_id: str) -> list[dict[str, Any]]:
             "reference_image": char_profile["reference_image_path"],
             "prompt_data": prompt_data,
             "file_path": file_path,
-            "provider": "MANUAL_HANDOFF_OR_LOCAL",
+            "provider": provider,
             "approval_status": approval_status,
             "quality_checklist": existing.get("quality_checklist") if existing else {
                 "identity_consistency": False,
@@ -129,6 +130,7 @@ def import_generated_image(
 
     old_status = target.get("approval_status", ApprovalStatus.PENDING.value)
     target["file_path"] = relative_path
+    target["provider"] = "MANUAL_HANDOFF_OR_LOCAL"
     target["approval_status"] = ApprovalStatus.PENDING.value
     target["imported_at"] = datetime.now(timezone.utc).isoformat()
     target["import_notes"] = source_notes or "Imported via manual handoff workflow."
@@ -171,10 +173,13 @@ def import_image_from_path(
 
 
 def approve_image(brief_id: str, image_id: str, user_name: str = "User") -> dict:
-    """Approve a reviewed image."""
+    """Approve a reviewed image (supports local imported images or ChatGPT-direct approved images)."""
     images = load_image_assets(brief_id)
     target = next((img for img in images if img.get("image_id") == image_id), None)
-    if not target or not target.get("file_path"):
+    if not target:
+        raise ValueError(f"Image asset '{image_id}' not found in brief '{brief_id}'.")
+
+    if not target.get("file_path") and target.get("provider") != "CHATGPT_DIRECT":
         raise ValueError("Cannot approve image: No image file has been imported or generated yet.")
 
     return set_image_approval_status(
@@ -184,6 +189,42 @@ def approve_image(brief_id: str, image_id: str, user_name: str = "User") -> dict
         reason="Image visually inspected and approved.",
         user_name=user_name,
     )
+
+
+def approve_image_in_chatgpt(brief_id: str, image_id: str, user_name: str = "User") -> dict:
+    """Approve an image generated, reviewed, and approved directly by the user in ChatGPT."""
+    images = load_image_assets(brief_id)
+    target = next((img for img in images if img.get("image_id") == image_id), None)
+    if not target:
+        raise ValueError(f"Image asset '{image_id}' not found in brief '{brief_id}'.")
+
+    target["provider"] = "CHATGPT_DIRECT"
+    target["approval_method"] = "CHATGPT_DIRECT"
+    target["approval_status"] = ApprovalStatus.APPROVED.value
+    target["approved_in_chatgpt_at"] = datetime.now(timezone.utc).isoformat()
+    target["updated_at"] = datetime.now(timezone.utc).isoformat()
+    save_image_assets(brief_id, images)
+
+    return set_image_approval_status(
+        brief_id=brief_id,
+        image_id=image_id,
+        new_status=ApprovalStatus.APPROVED,
+        reason="Image generated, reviewed, and approved directly in ChatGPT by user.",
+        user_name=user_name,
+    )
+
+
+def approve_all_images_in_chatgpt(brief_id: str, user_name: str = "User") -> list[dict]:
+    """Approve all image assets for a brief in ChatGPT-Direct mode."""
+    images = load_image_assets(brief_id)
+    if not images:
+        raise ValueError(f"No image prompts found for brief '{brief_id}'. Prepare image prompts first.")
+
+    updated = []
+    for img in images:
+        res = approve_image_in_chatgpt(brief_id, img["image_id"], user_name=user_name)
+        updated.append(res)
+    return updated
 
 
 def reject_image(brief_id: str, image_id: str, reason: str, user_name: str = "User") -> dict:

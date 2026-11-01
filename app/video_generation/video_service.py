@@ -36,11 +36,12 @@ def prepare_video_prompts(brief_id: str) -> list[dict[str, Any]]:
     images_by_outfit = {img["outfit_id"]: img for img in images}
 
     # Strict prerequisite check: every approved outfit must have an APPROVED image
+    # Note: image can be approved via ChatGPT-Direct mode or via local file import
     unapproved_images = []
     for outfit in approved_outfits:
         oid = outfit["outfit_id"]
         img = images_by_outfit.get(oid)
-        if not img or img.get("approval_status") != ApprovalStatus.APPROVED.value or not img.get("file_path"):
+        if not img or img.get("approval_status") != ApprovalStatus.APPROVED.value:
             unapproved_images.append(oid)
 
     if unapproved_images:

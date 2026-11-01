@@ -13,7 +13,9 @@ from app.approval_workflow import (
 from app.fashion_ai import interpret_idea_with_gemini
 from app.idea_intake import create_research_brief, interpret_idea, save_research_brief
 from app.image_generation import (
+    approve_all_images_in_chatgpt,
     approve_image,
+    approve_image_in_chatgpt,
     import_generated_image,
     import_image_from_path,
     prepare_image_prompts,
@@ -532,11 +534,14 @@ with tab_outfits:
 
 
 # --------------------------------------------------
-# TAB 4: IMAGE STUDIO (Stage 4)
+# TAB 4: IMAGE STUDIO (Stage 4: ChatGPT-Direct Mode)
 # --------------------------------------------------
 with tab_images:
-    st.subheader("Stage 4: Image Prompts, Generation & Approval")
-    st.write("Generate detailed image prompts, import or upload generated assets, and review master character fidelity.")
+    st.subheader("Stage 4: Image Prompts & ChatGPT-Direct Studio")
+    st.write(
+        "Generate and review each look directly in ChatGPT using your approved master model reference. "
+        "When satisfied with a look in ChatGPT, click **Approved in ChatGPT → Next Look** to advance seamlessly to Stage 5."
+    )
 
     if not active_brief_id:
         st.warning("Please select an active project brief in the sidebar first.")
@@ -547,91 +552,160 @@ with tab_images:
         else:
             image_assets = load_image_assets(active_brief_id)
 
-            if st.button("🎨 Prepare Image Prompts for Approved Outfits", type="primary"):
-                try:
-                    assets = prepare_image_prompts(active_brief_id)
-                    st.success(f"Prepared {len(assets)} image prompts!")
-                    st.rerun()
-                except Exception as exc:
-                    st.error(f"Could not prepare image prompts: {exc}")
+            if not image_assets:
+                st.info("Outfits are approved! Generate the optimized ChatGPT generation prompts below.")
+                if st.button("🎨 Prepare Image Prompts for Approved Outfits", type="primary"):
+                    try:
+                        assets = prepare_image_prompts(active_brief_id)
+                        st.success(f"Prepared {len(assets)} image prompts!")
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"Could not prepare image prompts: {exc}")
+            else:
+                total_looks = len(image_assets)
+                approved_count = sum(1 for img in image_assets if img.get("approval_status") == "APPROVED")
 
-            st.divider()
+                # Top Progress and Quick-Action Bar
+                top_col1, top_col2, top_col3 = st.columns([2, 1, 1])
+                with top_col1:
+                    st.progress(approved_count / total_looks, text=f"Stage 4 Progress: {approved_count} of {total_looks} looks approved in ChatGPT")
+                with top_col2:
+                    st.link_button("🚀 Open ChatGPT", "https://chatgpt.com", use_container_width=True)
+                with top_col3:
+                    if approved_count < total_looks:
+                        if st.button("⚡ Approve All in ChatGPT", use_container_width=True, help="Approve all outfit image prompts in one click if already reviewed in ChatGPT"):
+                            approve_all_images_in_chatgpt(active_brief_id)
+                            st.success("All outfit images marked as approved in ChatGPT!")
+                            st.rerun()
+                    else:
+                        st.button("🎉 All Approved", disabled=True, use_container_width=True)
 
-            if image_assets:
-                for img in image_assets:
-                    img_id = img.get("image_id")
-                    oid = img.get("outfit_id")
-                    char_id = img.get("character_id")
-                    status = img.get("approval_status", "PENDING")
-                    status_color = "green" if status == "APPROVED" else ("red" if status == "REJECTED" else "orange")
+                if approved_count == total_looks:
+                    st.success("🎉 All outfit images have been approved directly in ChatGPT! Stage 5 (Video Studio) is unlocked.")
 
-                    with st.container(border=True):
-                        col_h, col_s = st.columns([4, 1])
-                        with col_h:
-                            st.markdown(f"#### {img_id} — {oid} ({img.get('character_name', char_id)})")
-                            st.caption(f"Master Character Reference: `{img.get('reference_image', '')}`")
-                        with col_s:
-                            st.markdown(f":{status_color}[**{status}**]")
+                st.divider()
 
-                        p_data = img.get("prompt_data", {})
-                        with st.expander("Detailed Generation Prompt (Copy to Flow / Imagen)", expanded=False):
-                            st.code(p_data.get("prompt_text", ""), language="text")
-                            st.caption(f"Negative Prompt: {p_data.get('negative_prompt', '')}")
-                            st.caption(f"Aspect Ratio: {p_data.get('aspect_ratio', '9:16')} · Sampler: {p_data.get('sampler')} · Steps: {p_data.get('steps')}")
+                # Sequential Look Navigation
+                step_key = f"stage4_view_idx_{active_brief_id}"
+                if step_key not in st.session_state:
+                    first_unapproved = next((i for i, img in enumerate(image_assets) if img.get("approval_status") != "APPROVED"), 0)
+                    st.session_state[step_key] = first_unapproved
 
-                        # Image preview or upload area
-                        col_preview, col_upload = st.columns([1, 1])
-                        file_path = img.get("file_path")
+                current_idx = min(st.session_state[step_key], total_looks - 1)
 
-                        with col_preview:
-                            st.markdown("**Generated / Imported Image**")
-                            if file_path:
-                                full_p = (PROJECT_DIR / file_path).resolve()
-                                if full_p.is_file():
-                                    st.image(str(full_p), caption=f"{img_id} - {oid}", use_container_width=True)
-                                else:
-                                    st.warning(f"File missing at: {file_path}")
+                look_options = [
+                    f"Look {i + 1}: {img.get('outfit_id')} ({'✅ Approved' if img.get('approval_status') == 'APPROVED' else '⏳ Pending'})"
+                    for i, img in enumerate(image_assets)
+                ]
+                selected_look_str = st.selectbox(
+                    "Navigate Outfits / Current Look:",
+                    options=look_options,
+                    index=current_idx,
+                    key=f"look_selector_{active_brief_id}",
+                )
+                selected_idx = look_options.index(selected_look_str)
+                st.session_state[step_key] = selected_idx
+                active_img = image_assets[selected_idx]
+
+                img_id = active_img.get("image_id")
+                oid = active_img.get("outfit_id")
+                char_id = active_img.get("character_id")
+                char_name = active_img.get("character_name", char_id)
+                status = active_img.get("approval_status", "PENDING")
+                is_approved = status == "APPROVED"
+                status_color = "green" if is_approved else "orange"
+
+                with st.container(border=True):
+                    head_l, head_r = st.columns([3, 1])
+                    with head_l:
+                        st.markdown(f"### Look {selected_idx + 1} of {total_looks}: {oid} — {char_name}")
+                        st.caption(f"Asset ID: `{img_id}` · Character ID: `{char_id}`")
+                    with head_r:
+                        badge_text = "APPROVED (ChatGPT Direct)" if (is_approved and active_img.get("provider") == "CHATGPT_DIRECT") else status
+                        st.markdown(f":{status_color}[**{badge_text}**]")
+
+                    p_data = active_img.get("prompt_data", {})
+                    chatgpt_text = p_data.get("chatgpt_prompt") or p_data.get("prompt_text", "")
+
+                    col_char, col_main = st.columns([1, 2])
+
+                    with col_char:
+                        st.markdown("**1. Master Reference Image**")
+                        ref_rel = active_img.get("reference_image", "")
+                        ref_full = (PROJECT_DIR / ref_rel).resolve() if ref_rel else None
+                        if ref_full and ref_full.is_file():
+                            st.image(str(ref_full), caption=f"{char_name} ({char_id})", use_container_width=True)
+                            st.caption("👉 Attach this image to your message in ChatGPT.")
+                        else:
+                            st.warning(f"Reference image missing at: {ref_rel}")
+
+                    with col_main:
+                        st.markdown("**2. Copy Prompt to ChatGPT**")
+                        st.caption("Paste this prompt into ChatGPT with the reference image attached:")
+                        st.code(chatgpt_text, language="text")
+
+                        st.markdown("**3. Confirm & Advance**")
+                        act_col1, act_col2 = st.columns([2, 1])
+
+                        with act_col1:
+                            btn_label = "✅ Approved in ChatGPT → Next Look" if selected_idx < total_looks - 1 else "✅ Approved in ChatGPT (Final Look)"
+                            if st.button(btn_label, key=f"appr_btn_{img_id}", type="primary", use_container_width=True):
+                                approve_image_in_chatgpt(active_brief_id, img_id)
+                                if selected_idx < total_looks - 1:
+                                    st.session_state[step_key] = selected_idx + 1
+                                st.success(f"{oid} marked as approved in ChatGPT!")
+                                st.rerun()
+
+                        with act_col2:
+                            if is_approved:
+                                if st.button("Reset Approval", key=f"reset_btn_{img_id}", use_container_width=True):
+                                    reject_image(active_brief_id, img_id, reason="User requested revision.")
+                                    st.rerun()
                             else:
-                                st.info("No image file imported yet. Upload or import below.")
+                                if st.button("Skip to Next", key=f"skip_btn_{img_id}", use_container_width=True):
+                                    if selected_idx < total_looks - 1:
+                                        st.session_state[step_key] = selected_idx + 1
+                                        st.rerun()
 
-                        with col_upload:
-                            st.markdown("**Manual Handoff / Asset Import**")
-                            st.caption("Upload generated image from Google Flow / Imagen / Midjourney:")
-                            uploaded_img = st.file_uploader(
-                                f"Upload Image for {img_id}",
-                                type=["png", "jpg", "jpeg", "webp"],
-                                key=f"upload_img_{img_id}",
-                            )
-                            if uploaded_img:
-                                if st.button(f"Save Image for {img_id}", key=f"btn_save_img_{img_id}", type="primary"):
+                        # Optional local file attachment for archival (not required)
+                        with st.expander("📁 Optional: Attach Local Image File (Not Required)", expanded=False):
+                            st.caption("Wear & Wonder does not require local image files. Upload only if you wish to archive a copy locally.")
+                            opt_upload = st.file_uploader(f"Upload local copy for {img_id}", type=["png", "jpg", "jpeg", "webp"], key=f"opt_upload_{img_id}")
+                            if opt_upload:
+                                if st.button(f"Save Local File for {img_id}", key=f"btn_save_opt_{img_id}"):
                                     import_generated_image(
                                         brief_id=active_brief_id,
                                         image_id=img_id,
-                                        image_bytes=uploaded_img.getvalue(),
-                                        file_extension="." + uploaded_img.name.rsplit(".", 1)[-1].lower(),
+                                        image_bytes=opt_upload.getvalue(),
+                                        file_extension="." + opt_upload.name.rsplit(".", 1)[-1].lower(),
                                     )
-                                    st.success(f"Image saved for {img_id}!")
+                                    st.success("Optional local image file attached!")
                                     st.rerun()
 
-                            st.divider()
-                            st.markdown("**Image Approval Actions**")
-                            b1, b2 = st.columns(2)
-                            with b1:
-                                if status == "APPROVED":
-                                    st.button("Approved", key=f"appr_img_dis_{img_id}", disabled=True, use_container_width=True)
-                                elif st.button("Approve Image", key=f"appr_img_{img_id}", type="primary", use_container_width=True, disabled=not bool(file_path)):
-                                    try:
-                                        approve_image(active_brief_id, img_id)
-                                        st.success(f"{img_id} approved!")
-                                        st.rerun()
-                                    except Exception as exc:
-                                        st.error(str(exc))
-                            with b2:
-                                if st.button("Reject Image", key=f"rej_img_{img_id}", use_container_width=True):
-                                    reject_image(active_brief_id, img_id, reason="User rejected visual output.")
+                            file_p = active_img.get("file_path")
+                            if file_p:
+                                full_p = (PROJECT_DIR / file_p).resolve()
+                                if full_p.is_file():
+                                    st.image(str(full_p), caption=f"Archived local file: {img_id}", width=200)
+
+                # Overview accordion for all looks
+                with st.expander("📋 Overview of All Outfit Prompts", expanded=False):
+                    for idx, look in enumerate(image_assets):
+                        l_id = look.get("image_id")
+                        l_oid = look.get("outfit_id")
+                        l_stat = look.get("approval_status", "PENDING")
+                        l_col1, l_col2, l_col3 = st.columns([1, 3, 1])
+                        with l_col1:
+                            st.write(f"**Look {idx + 1}: {l_oid}**")
+                        with l_col2:
+                            st.caption(look.get("prompt_data", {}).get("chatgpt_prompt", "")[:120] + "...")
+                        with l_col3:
+                            if l_stat == "APPROVED":
+                                st.markdown(":green[**Approved**]")
+                            else:
+                                if st.button(f"Approve {l_oid}", key=f"quick_appr_{l_id}"):
+                                    approve_image_in_chatgpt(active_brief_id, l_id)
                                     st.rerun()
-            else:
-                st.info("No image prompts prepared yet. Click 'Prepare Image Prompts for Approved Outfits' above.")
 
 
 # --------------------------------------------------
@@ -672,9 +746,11 @@ with tab_videos:
                         col_vh, col_vs = st.columns([4, 1])
                         with col_vh:
                             st.markdown(f"#### {clip_id} — {oid}")
-                            st.caption(f"Approved Image: `{img_id}` · Character: **{vid.get('character_id')}**")
+                            st.caption(f"Approved Image Asset: `{img_id}` · Character: **{vid.get('character_id')}**")
                         with col_vs:
                             st.markdown(f":{status_color}[**{status}**]")
+
+                        st.info(f"💡 In Google Flow, upload your approved ChatGPT image for **{oid}** as the Start Frame, then paste the master prompt below.")
 
                         p_data = vid.get("prompt_data", {})
                         st.markdown(f"**Dialogue Line:** *\"{p_data.get('dialogue', '')}\"*")

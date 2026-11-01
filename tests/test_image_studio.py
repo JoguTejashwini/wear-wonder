@@ -6,7 +6,9 @@ from unittest.mock import patch
 
 from app.approval_workflow import ApprovalStatus
 from app.image_generation.image_service import (
+    approve_all_images_in_chatgpt,
     approve_image,
+    approve_image_in_chatgpt,
     import_generated_image,
     prepare_image_prompts,
     reject_image,
@@ -132,6 +134,60 @@ class TestImageStudio(unittest.TestCase):
             # 4. Now approve
             approved = approve_image(self.brief_id, "IMG-01")
             self.assertEqual(approved["approval_status"], ApprovalStatus.APPROVED.value)
+
+    def test_build_image_prompt_contains_chatgpt_prompt(self):
+        prompt_data = build_image_prompt_for_outfit(self.mock_outfit, "WW-CHAR-01")
+        self.assertIn("chatgpt_prompt", prompt_data)
+        chat_prompt = prompt_data["chatgpt_prompt"]
+        self.assertIn("WW-CHAR-01", chat_prompt)
+        self.assertIn("attached master model reference image", chat_prompt)
+        self.assertIn("Strictly maintain her exact facial structure", chat_prompt)
+        self.assertIn("Relaxed Straight Denim and White Tee", chat_prompt)
+        self.assertIn("9:16", chat_prompt)
+
+    def test_approve_image_in_chatgpt_direct_mode(self):
+        with (
+            patch("app.storage.RESEARCH_FILE", self.test_data_dir / "research.json"),
+            patch("app.storage.OUTFITS_FILE", self.test_data_dir / "outfits.json"),
+            patch("app.storage.IMAGE_ASSETS_FILE", self.test_data_dir / "image_assets.json"),
+            patch("app.storage.AUDIT_LOG_FILE", self.test_data_dir / "workflow_audit.json"),
+        ):
+            save_or_update_brief(self.mock_brief)
+            save_outfits(self.brief_id, [self.mock_outfit])
+
+            # Prepare prompts
+            assets = prepare_image_prompts(self.brief_id)
+            self.assertEqual(len(assets), 1)
+            self.assertIsNone(assets[0]["file_path"])
+
+            # Directly approve in ChatGPT (no local file uploaded)
+            approved = approve_image_in_chatgpt(self.brief_id, "IMG-01")
+            self.assertEqual(approved["approval_status"], ApprovalStatus.APPROVED.value)
+            self.assertEqual(approved["provider"], "CHATGPT_DIRECT")
+            self.assertIsNone(approved["file_path"])
+
+            # Loaded asset reflects approval
+            loaded = load_image_assets(self.brief_id)
+            self.assertEqual(loaded[0]["approval_status"], ApprovalStatus.APPROVED.value)
+            self.assertEqual(loaded[0]["provider"], "CHATGPT_DIRECT")
+
+    def test_approve_all_images_in_chatgpt(self):
+        with (
+            patch("app.storage.RESEARCH_FILE", self.test_data_dir / "research.json"),
+            patch("app.storage.OUTFITS_FILE", self.test_data_dir / "outfits.json"),
+            patch("app.storage.IMAGE_ASSETS_FILE", self.test_data_dir / "image_assets.json"),
+            patch("app.storage.AUDIT_LOG_FILE", self.test_data_dir / "workflow_audit.json"),
+        ):
+            save_or_update_brief(self.mock_brief)
+            outfit2 = dict(self.mock_outfit)
+            outfit2["outfit_id"] = "OUTFIT-02"
+            save_outfits(self.brief_id, [self.mock_outfit, outfit2])
+
+            prepare_image_prompts(self.brief_id)
+            approved_all = approve_all_images_in_chatgpt(self.brief_id)
+            self.assertEqual(len(approved_all), 2)
+            self.assertTrue(all(a["approval_status"] == ApprovalStatus.APPROVED.value for a in approved_all))
+            self.assertTrue(all(a["provider"] == "CHATGPT_DIRECT" for a in approved_all))
 
 
 if __name__ == "__main__":

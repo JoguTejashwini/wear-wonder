@@ -145,6 +145,37 @@ class TestVideoStudio(unittest.TestCase):
             prereqs = get_workflow_prerequisites(self.brief_id)
             self.assertTrue(prereqs["stage_6_ready"])
 
+    def test_prepare_video_prompts_with_chatgpt_direct_images(self):
+        """Verify video prompts can be prepared when images are approved via ChatGPT Direct without local image files."""
+        with (
+            patch("app.storage.RESEARCH_FILE", self.test_data_dir / "research.json"),
+            patch("app.storage.OUTFITS_FILE", self.test_data_dir / "outfits.json"),
+            patch("app.storage.IMAGE_ASSETS_FILE", self.test_data_dir / "image_assets.json"),
+            patch("app.storage.VIDEO_ASSETS_FILE", self.test_data_dir / "video_assets.json"),
+            patch("app.storage.AUDIT_LOG_FILE", self.test_data_dir / "workflow_audit.json"),
+        ):
+            save_or_update_brief(self.mock_brief)
+            save_outfits(self.brief_id, [self.mock_outfit])
+
+            # Image asset approved via ChatGPT Direct (no file_path)
+            chatgpt_direct_image = {
+                "image_id": "IMG-01",
+                "brief_id": self.brief_id,
+                "outfit_id": "OUTFIT-01",
+                "character_id": "WW-CHAR-01",
+                "file_path": None,
+                "provider": "CHATGPT_DIRECT",
+                "approval_status": "APPROVED",
+            }
+            save_image_assets(self.brief_id, [chatgpt_direct_image])
+
+            # Video prompts prepare cleanly
+            v_prompts = prepare_video_prompts(self.brief_id)
+            self.assertEqual(len(v_prompts), 1)
+            self.assertEqual(v_prompts[0]["clip_id"], "CLIP-01")
+            self.assertEqual(v_prompts[0]["approved_image_id"], "IMG-01")
+            self.assertIn("Start Frame: Approved master outfit image", v_prompts[0]["prompt_data"]["master_prompt"])
+
 
 if __name__ == "__main__":
     unittest.main()

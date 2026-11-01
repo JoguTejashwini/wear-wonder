@@ -1,6 +1,8 @@
 """Image generation package for Wear & Wonder."""
 from app.image_generation.image_service import (
+    approve_all_images_in_chatgpt,
     approve_image,
+    approve_image_in_chatgpt,
     import_generated_image,
     import_image_from_path,
     prepare_image_prompts,
@@ -18,5 +20,7 @@ __all__ = [
     "import_generated_image",
     "import_image_from_path",
     "approve_image",
+    "approve_image_in_chatgpt",
+    "approve_all_images_in_chatgpt",
     "reject_image",
 ]
