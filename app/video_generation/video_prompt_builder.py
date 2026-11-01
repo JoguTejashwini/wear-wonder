@@ -38,29 +38,68 @@ def build_video_prompt_for_outfit(
         f"with {footwear.lower()} for effortless everyday style."
     )
 
-    is_dual = bool(dual_character_id and dual_character_id != primary_char_id)
+    is_dual = bool(dual_character_id and dual_character_id != primary_char_id) or bool(image_asset.get("is_dual_model"))
     if is_dual:
-        secondary_char = get_verified_character_profile(dual_character_id)
+        sec_char_id = dual_character_id or image_asset.get("dual_character_id") or "WW-CHAR-02"
+        secondary_char = get_verified_character_profile(sec_char_id)
+
+        wardrobe_bg = "Stylish boutique walk-in wardrobe and dressing room with backlit vanity mirror, curated garment racks, and warm lighting, perfectly matching the approved starting frame."
+        bg_val = visual_desc.get("background", "")
+        if not bg_val or "wardrobe" not in bg_val.lower():
+            background_desc = wardrobe_bg if not bg_val else f"{wardrobe_bg} with {bg_val}"
+        else:
+            background_desc = bg_val
+
         character_position = (
-            f"Left frame: {primary_char['display_name']} ({primary_char_id}) wearing {garment_desc}. "
-            f"Right frame: {secondary_char['display_name']} ({dual_character_id}) standing in complementary coordination."
+            f"Left frame: Model 1 ({primary_char['display_name']} - {primary_char_id}) wearing approved Model 1 look. "
+            f"Right frame: Model 2 ({secondary_char['display_name']} - {sec_char_id}) standing alongside in complementary wardrobe styling."
         )
-        speaker_identity = f"{primary_char['display_name']} ({primary_char_id}) speaks the dialogue line. {secondary_char['display_name']} remains silent with a subtle engaging smile."
-        interaction_notes = "Models stand side by side; primary speaker glances slightly at camera while speaking, then shares a brief coordinated nod with secondary model."
+        speaker_identity = (
+            f"Model 1 ({primary_char['display_name']} - {primary_char_id}) is the ONLY speaker. "
+            f"Model 2 ({secondary_char['display_name']} - {sec_char_id}) remains silent with lips closed and NO mouth movement as if speaking."
+        )
+        interaction_notes = (
+            f"Model 1 ({primary_char['display_name']}) speaks naturally to camera with warm, expressive gestures. "
+            f"Model 2 ({secondary_char['display_name']}) reacts naturally and warmly, smiling subtly and holding silent poise without speaking."
+        )
+        facial_expressions = (
+            f"Model 1 ({primary_char['display_name']}): Confident, warm expression; direct engaging eye contact with camera; relaxed natural smile and mouth movement during vocal delivery. "
+            f"Model 2 ({secondary_char['display_name']}): Warm, pleasant smile; relaxed listening expression; lips remain closed at all times."
+        )
+        lip_sync_instructions = (
+            f"Precise lip-sync timing exclusively for Model 1 ({primary_char['display_name']}), accurately matching spoken dialogue '{dialogue_script}'. "
+            f"Model 2 ({secondary_char['display_name']}) has ZERO mouth movement and no lip-sync as if speaking."
+        )
+        continuity_requirements = (
+            f"Both models' identities ({primary_char_id} and {sec_char_id}), both approved outfits, "
+            f"and the stylish wardrobe/dressing-room background must maintain 100% visual consistency with approved start frame '{start_frame_name}' throughout all 6 seconds."
+        )
+        negative_constraints = (
+            "Model 2 speaking, Model 2 moving mouth, Model 2 lip movement, speech desync, swapping outfits between models, "
+            "morphing garments, altering fabric color mid-clip, floating limbs, extra fingers, disjointed mouth movement, "
+            "jittery motion, background shifting, distorted face, unapproved hair change, blurry shoes, cut off feet"
+        )
     else:
         character_position = f"Center frame: {primary_char['display_name']} ({primary_char_id}) standing full-length in vertical fashion framing."
         speaker_identity = f"{primary_char['display_name']} ({primary_char_id})"
         interaction_notes = "Solo model presentation."
+        facial_expressions = "Calm, welcoming expression; eyes engaged directly with camera lens; relaxed natural smile while speaking."
+        lip_sync_instructions = (
+            f"Precise lip-sync timing strictly matching the spoken English dialogue: '{dialogue_script}'. "
+            "Natural mouth articulation without exaggerated jaw movements or facial warping."
+        )
+        continuity_requirements = (
+            f"Garments ({garment_desc} in {colours}), hairstyle ({hairstyle}), footwear ({footwear}), "
+            "and physical identity must maintain 100% visual consistency with the approved starting frame throughout all 6 seconds."
+        )
+        negative_constraints = (
+            "morphing garments, altering fabric color mid-clip, floating limbs, extra fingers, disjointed mouth movement, "
+            "jittery motion, background shifting, distorted face, unapproved hair change, blurry shoes, cut off feet"
+        )
 
     pose_and_movement = (
         "Model begins in poised standing posture, takes one subtle, confident half-step forward, "
         "gently turns shoulders 15 degrees to display side profile and denim drape, then smoothly returns facing camera."
-    )
-
-    facial_expressions = "Calm, welcoming expression; eyes engaged directly with camera lens; relaxed natural smile while speaking."
-    lip_sync_instructions = (
-        f"Precise lip-sync timing strictly matching the spoken English dialogue: '{dialogue_script}'. "
-        "Natural mouth articulation without exaggerated jaw movements or facial warping."
     )
 
     hand_movements = "Right hand lightly brushes waistband or pocket; left arm rests naturally at side with relaxed fingers. Zero finger deformation."
@@ -70,14 +109,6 @@ def build_video_prompt_for_outfit(
     background = background_desc
     lighting = "Consistent soft commercial key lighting; high color fidelity maintaining exact garment hues matching approved starting frame."
     audio_requirements = "Clear, crisp studio vocal narration; subtle warm acoustic lo-fi fashion background music cue; zero audio distortion."
-    continuity_requirements = (
-        f"Garments ({garment_desc} in {colours}), hairstyle ({hairstyle}), footwear ({footwear}), "
-        "and physical identity must maintain 100% visual consistency with the approved starting frame throughout all 6 seconds."
-    )
-    negative_constraints = (
-        "morphing garments, altering fabric color mid-clip, floating limbs, extra fingers, disjointed mouth movement, "
-        "jittery motion, background shifting, distorted face, unapproved hair change, blurry shoes, cut off feet"
-    )
 
     # Master prompt block for Google Flow / Sora / Runway
     master_prompt = (

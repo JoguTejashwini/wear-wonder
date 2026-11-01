@@ -14,6 +14,7 @@ from app.fashion_ai import interpret_idea_with_gemini
 from app.idea_intake import create_research_brief, interpret_idea, save_research_brief
 from app.image_generation import (
     approve_image,
+    configure_dual_model_image_look,
     import_generated_image,
     import_image_from_path,
     prepare_image_prompts,
@@ -646,31 +647,87 @@ with tab_images:
                         else:
                             st.markdown(":red[**AWAITING IMAGE UPLOAD**]")
 
+                    # Two-Model Wardrobe Studio Mode Expander
+                    is_dual = active_img.get("is_dual_model", False)
+                    with st.expander("👯 Two-Model Wardrobe Studio (Generate Both Models in Stylish Wardrobe)", expanded=is_dual):
+                        st.caption(
+                            "Select two master models and generate ONE image containing both models together in a stylish wardrobe/dressing-room background. "
+                            "In Stage 5, Model 1 will be the only speaker with lip-sync, while Model 2 remains completely silent."
+                        )
+                        dm_col1, dm_col2 = st.columns(2)
+                        available_chars = list(ALLOWED_MODELS.keys())
+                        all_outfits = load_outfits(active_brief_id)
+                        approved_oids = [o["outfit_id"] for o in all_outfits if o.get("approval_status") == "APPROVED"] or [oid]
+
+                        with dm_col1:
+                            m1_idx = available_chars.index(char_id) if char_id in available_chars else 0
+                            sel_m1 = st.selectbox("Select Model 1 (Primary Speaker):", options=available_chars, index=m1_idx, key=f"sel_m1_{img_id}")
+                            o1_idx = approved_oids.index(oid) if oid in approved_oids else 0
+                            sel_o1 = st.selectbox("Select Outfit for Model 1:", options=approved_oids, index=o1_idx, key=f"sel_o1_{img_id}")
+                        with dm_col2:
+                            current_m2 = active_img.get("dual_character_id")
+                            m2_default = current_m2 if (current_m2 and current_m2 in available_chars) else next((c for c in available_chars if c != sel_m1), available_chars[0])
+                            m2_idx = available_chars.index(m2_default)
+                            sel_m2 = st.selectbox("Select Model 2 (Silent Companion):", options=available_chars, index=m2_idx, key=f"sel_m2_{img_id}")
+                            sel_o2 = st.selectbox("Select Outfit for Model 2:", options=approved_oids, index=min(1, len(approved_oids) - 1), key=f"sel_o2_{img_id}")
+
+                        if st.button("✨ Apply Two-Model Wardrobe Prompt to this Look", key=f"btn_apply_dual_{img_id}", type="primary"):
+                            configure_dual_model_image_look(
+                                brief_id=active_brief_id,
+                                image_id=img_id,
+                                character_id_1=sel_m1,
+                                character_id_2=sel_m2,
+                                outfit_id_1=sel_o1,
+                                outfit_id_2=sel_o2,
+                            )
+                            st.success("Two-model wardrobe prompt applied! Review prompt and reference images below.")
+                            st.rerun()
+
                     p_data = active_img.get("prompt_data", {})
                     chatgpt_text = p_data.get("chatgpt_prompt") or p_data.get("prompt_text", "")
 
                     # 3-Column Studio Layout
-                    col_ref, col_upload, col_verify = st.columns([1, 1, 1.2])
+                    col_ref, col_upload, col_verify = st.columns([1.1, 1, 1.2])
 
                     # Column 1: Reference & ChatGPT Prompt
                     with col_ref:
-                        st.markdown("**1. Master Character Reference**")
-                        ref_rel = active_img.get("reference_image", "")
-                        ref_full = (PROJECT_DIR / ref_rel).resolve() if ref_rel else None
-                        if ref_full and ref_full.is_file():
-                            st.image(str(ref_full), caption=f"{char_name} ({char_id})", use_container_width=True)
-                            st.caption("👉 Attach this master model photo to ChatGPT.")
-                        else:
-                            st.warning(f"Reference image missing at: {ref_rel}")
+                        if is_dual:
+                            st.markdown("**1. Master Character References (Both Models)**")
+                            st.info("👥 **Attach BOTH reference images** to your message in ChatGPT.")
+                            r_c1, r_c2 = st.columns(2)
+                            ref_rel1 = active_img.get("reference_image", "")
+                            ref_full1 = (PROJECT_DIR / ref_rel1).resolve() if ref_rel1 else None
+                            with r_c1:
+                                if ref_full1 and ref_full1.is_file():
+                                    st.image(str(ref_full1), caption=f"Model 1: {active_img.get('character_id')}", use_container_width=True)
+                            ref_rel2 = active_img.get("reference_image_2", "")
+                            ref_full2 = (PROJECT_DIR / ref_rel2).resolve() if ref_rel2 else None
+                            with r_c2:
+                                if ref_full2 and ref_full2.is_file():
+                                    st.image(str(ref_full2), caption=f"Model 2: {active_img.get('dual_character_id')}", use_container_width=True)
 
-                        st.markdown("**Prompt for ChatGPT**")
-                        st.caption("Paste into ChatGPT with the reference image attached:")
-                        st.code(chatgpt_text, language="text")
+                            st.markdown("**Prompt for ChatGPT (Two Models in Wardrobe)**")
+                            st.caption("Paste into ChatGPT with BOTH master reference photos attached:")
+                            st.code(chatgpt_text, language="text")
+                        else:
+                            st.markdown("**1. Master Character Reference**")
+                            ref_rel = active_img.get("reference_image", "")
+                            ref_full = (PROJECT_DIR / ref_rel).resolve() if ref_rel else None
+                            if ref_full and ref_full.is_file():
+                                st.image(str(ref_full), caption=f"{char_name} ({char_id})", use_container_width=True)
+                                st.caption("👉 Attach this master model photo to ChatGPT.")
+                            else:
+                                st.warning(f"Reference image missing at: {ref_rel}")
+
+                            st.markdown("**Prompt for ChatGPT**")
+                            st.caption("Paste into ChatGPT with the reference image attached:")
+                            st.code(chatgpt_text, language="text")
 
                     # Column 2: Upload Generated Image
                     with col_upload:
                         st.markdown("**2. Upload ChatGPT Generated Image**")
-                        st.caption("Upload the image generated from ChatGPT for this look:")
+                        upload_caption = f"Upload the image generated from ChatGPT containing both models for {oid}:" if is_dual else f"Upload the image generated from ChatGPT for {oid}:"
+                        st.caption(upload_caption)
                         uploaded_file = st.file_uploader(
                             f"Drop ChatGPT image for {oid}",
                             type=["png", "jpg", "jpeg", "webp"],
@@ -905,6 +962,15 @@ with tab_videos:
                             st.markdown("**2. Google Flow Master Prompt**")
                             st.caption("Paste this master prompt into Google Flow with the Starting Frame uploaded:")
                             st.code(p_data.get("master_prompt", ""), language="text")
+
+                            is_dual_clip = bool(vid.get("dual_character_id") or matched_img.get("is_dual_model"))
+                            if is_dual_clip:
+                                st.info(
+                                    f"👥 **Two-Model Wardrobe Video Directives**:\n"
+                                    f"- 🗣️ **Model 1 ({vid.get('character_id')})**: The ONLY speaker. Delivers dialogue with accurate lip-sync and expressive natural gestures.\n"
+                                    f"- 🤫 **Model 2 ({vid.get('dual_character_id')})**: Strictly silent, lips closed with NO mouth movement as if speaking, reacting naturally.\n"
+                                    f"- 🚪 **Wardrobe Background**: Stylish dressing room interior with mirror and garment racks preserved 100% stable."
+                                )
 
                             st.markdown(f"**Dialogue:** *\"{p_data.get('dialogue', '')}\"*")
                             st.caption(f"Speaker: {p_data.get('speaker_identity', '')} · Lip-sync: {p_data.get('lip_sync_instructions', '')}")

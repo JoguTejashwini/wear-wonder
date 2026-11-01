@@ -63,7 +63,10 @@ def prepare_video_prompts(brief_id: str) -> list[dict[str, Any]]:
         oid = outfit["outfit_id"]
         img = images_by_outfit[oid]
 
-        dual_char = requested_chars[1] if (has_dual_chars and requested_chars[0] == img.get("character_id")) else (requested_chars[0] if has_dual_chars else None)
+        dual_char = img.get("dual_character_id") or (
+            requested_chars[1] if (has_dual_chars and requested_chars[0] == img.get("character_id"))
+            else (requested_chars[0] if has_dual_chars and requested_chars[0] != img.get("character_id") else None)
+        )
 
         prompt_data = build_video_prompt_for_outfit(
             outfit=outfit,
@@ -140,7 +143,10 @@ def regenerate_single_video_prompt(brief_id: str, clip_id: str) -> dict[str, Any
     brief = get_brief_by_id(brief_id) or {}
     requested_chars = brief.get("requested_characters") or []
     has_dual_chars = len(requested_chars) >= 2
-    dual_char = requested_chars[1] if (has_dual_chars and requested_chars[0] == img.get("character_id")) else (requested_chars[0] if has_dual_chars else None)
+    dual_char = img.get("dual_character_id") or (
+        requested_chars[1] if (has_dual_chars and requested_chars[0] == img.get("character_id"))
+        else (requested_chars[0] if has_dual_chars and requested_chars[0] != img.get("character_id") else None)
+    )
 
     clip_num = 1
     if "-" in clip_id:

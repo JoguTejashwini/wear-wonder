@@ -24,8 +24,8 @@
     "interpretation_method": "LOCAL_RULES",
     "interpretation_note": "Extracted details are suggestions. Review them before approving the research brief.",
     "additional_requirements": null,
-    "research_status": "PENDING",
-    "outfit_approval": "PENDING",
+    "research_status": "APPROVED",
+    "outfit_approval": "APPROVED",
     "created_at": "2026-10-24T06:25:09.053758+00:00"
   },
   {
@@ -44,5 +44,101 @@
     "outfit_approval": "PENDING",
     "created_at": "2026-10-24T06:47:37.330889+00:00",
     "reference_url": null
+  },
+  {
+    "brief_id": "715bf1bd-7dd6-4fd3-a49e-b0e96e26f1db",
+    "idea_original": "create a video on color combination of model 1 and 3,  3 color combo",
+    "primary_topic": "colour_combinations",
+    "topic_name": "Colour Combinations",
+    "audience": "College girls",
+    "outfit_count": 3,
+    "requested_characters": [
+      "WW-CHAR-01",
+      "WW-CHAR-03"
+    ],
+    "interpretation_method": "LOCAL_RULES",
+    "interpretation_note": "Extracted details are suggestions. Review them before approving the research brief. Local rules do not perform live research.",
+    "additional_requirements": null,
+    "research_status": "PENDING",
+    "outfit_approval": "PENDING",
+    "created_at": "2026-11-01T10:49:01.178912+00:00",
+    "reference_url": null,
+    "ai_analysis": {}
+  },
+  {
+    "brief_id": "3b53ab7d-d8a3-4095-8e23-ae366bd73c90",
+    "idea_original": "create 3 colour combinations ,using two female models side by side",
+    "primary_topic": "colour_combinations",
+    "topic_name": "Colour Combinations",
+    "audience": null,
+    "outfit_count": 3,
+    "requested_characters": [
+      "WW-CHAR-01",
+      "WW-CHAR-02"
+    ],
+    "interpretation_method": "LOCAL_RULES",
+    "interpretation_note": "Extracted details are suggestions. Review them before approving the research brief. Local rules do not perform live research.",
+    "additional_requirements": null,
+    "research_status": "PENDING",
+    "outfit_approval": "PENDING",
+    "created_at": "2026-11-01T11:19:40.646663+00:00",
+    "reference_url": null,
+    "ai_analysis": {}
+  },
+  {
+    "brief_id": "357155be-1ec2-455d-abd7-e45f34136a0d",
+    "idea_original": "create 3 colour combinations ,using two female models side by side",
+    "primary_topic": "colour_combinations",
+    "topic_name": "Colour Combinations",
+    "audience": "College girls",
+    "outfit_count": 6,
+    "requested_characters": [
+      "WW-CHAR-01",
+      "WW-CHAR-02"
+    ],
+    "interpretation_method": "GEMINI_API",
+    "interpretation_note": "Extracted details are suggestions. Review them before approving the research brief. Local rules do not perform live research.",
+    "additional_requirements": null,
+    "research_status": "PENDING",
+    "outfit_approval": "PENDING",
+    "created_at": "2026-11-01T11:22:41.962449+00:00",
+    "reference_url": null,
+    "ai_analysis": {
+      "primary_topic": "colour_combinations",
+      "topic_name": "Colour Combinations",
+      "audience": null,
+      "outfit_count": 6,
+      "requested_characters": [
+        "WW-CHAR-01",
+        "WW-CHAR-02"
+      ],
+      "concept_summary": "A side-by-side showcase featuring two female models presenting three distinct, coordinated colour combination themes, resulting in six distinct complete looks.",
+      "styling_direction": "Pair complementary and harmonious colour palettes across both models for each theme (e.g., tonal, contrasting, and triadic/analogous). Ensure balanced proportions, seasonal cohesion, and complete styling including footwear, jewelry, and bags to highlight the interplay between both outfits.",
+      "research_plan": [
+        "Identify current trending two-tone and triadic colour combinations across contemporary womenswear.",
+        "Investigate complementary silhouette balancing for side-by-side editorial framing.",
+        "Source fabric pairings that enhance colour saturation and texture contrast."
+      ],
+      "validation_checklist": [
+        "Verify each pair of outfits clearly communicates the intended colour combination.",
+        "Ensure distinctness in silhouettes, fabric weights, and styling between WW-CHAR-01 and WW-CHAR-02.",
+        "Check that footwear, accessories, and outerwear are fully resolved for all 6 outfits.",
+        "Confirm colour contrast works well against neutral background environments."
+      ],
+      "clarifying_questions": [
+        "What specific target audience or aesthetic (e.g., casual street, workwear, high fashion) do you prefer for these looks?",
+        "Do you have preferred specific colour palettes in mind, or should we select the three combinations?",
+        "Is there a specific season or occasion you want these outfits tailored toward?"
+      ],
+      "assumptions": [
+        "Interpreted '3 colour combinations using two female models side by side' as 3 scenes with 2 outfits each, totaling 6 outfits.",
+        "Assigned Female Model 01 (WW-CHAR-01) and Female Model 02 (WW-CHAR-02) as the two requested female models.",
+        "Assumed styling will cover full head-to-toe looks suitable for general contemporary everyday or smart-casual wear."
+      ],
+      "interpretation_method": "GEMINI_API",
+      "research_status": "PENDING",
+      "outfit_approval": "PENDING",
+      "live_research_performed": false
+    }
   }
 ]

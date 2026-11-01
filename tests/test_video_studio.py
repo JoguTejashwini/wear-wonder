@@ -102,9 +102,28 @@ class TestVideoStudio(unittest.TestCase):
         )
         self.assertIn("Left frame", prompt_data["character_position"])
         self.assertIn("Right frame", prompt_data["character_position"])
+
+        # Model 1 must be the only speaker
+        self.assertIn("ONLY speaker", prompt_data["speaker_identity"])
+        self.assertIn("Model 1", prompt_data["lip_sync_instructions"])
+
+        # Model 2 must remain silent with lips closed and zero mouth movement
         self.assertIn("remains silent", prompt_data["speaker_identity"])
+        self.assertIn("lips closed", prompt_data["speaker_identity"])
+        self.assertIn("NO mouth movement", prompt_data["speaker_identity"])
+        self.assertIn("ZERO mouth movement", prompt_data["lip_sync_instructions"])
+
+        # Both identities preserved
         self.assertEqual(prompt_data["dual_character_id"], "WW-CHAR-02")
+        self.assertIn("WW-CHAR-01", prompt_data["master_prompt"])
         self.assertIn("WW-CHAR-02", prompt_data["master_prompt"])
+
+        # Wardrobe background preserved
+        self.assertIn("wardrobe", prompt_data["background"].lower())
+
+        # Negative constraints prevent Model 2 from speaking or moving lips
+        self.assertIn("Model 2 speaking", prompt_data["negative_constraints"])
+        self.assertIn("Model 2 moving mouth", prompt_data["negative_constraints"])
 
     def test_cannot_prepare_video_prompts_if_images_unapproved_or_missing_file(self):
         with (

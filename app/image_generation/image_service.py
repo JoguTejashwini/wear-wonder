@@ -10,6 +10,7 @@ from app.approval_workflow import (
     set_image_approval_status,
 )
 from app.image_generation.prompt_builder import (
+    build_dual_model_image_prompt,
     build_image_prompt_for_outfit,
     get_verified_character_profile,
 )
@@ -275,3 +276,78 @@ def reject_image(brief_id: str, image_id: str, reason: str, user_name: str = "Us
         reason=reason,
         user_name=user_name,
     )
+
+
+def configure_dual_model_image_look(
+    brief_id: str,
+    image_id: str,
+    character_id_1: str,
+    character_id_2: str,
+    outfit_id_1: str,
+    outfit_id_2: str | None = None,
+    user_name: str = "User",
+) -> dict[str, Any]:
+    """Configure an image look as a dual-model look in a stylish wardrobe/dressing-room setting."""
+    images = load_image_assets(brief_id)
+    target = next((img for img in images if img.get("image_id") == image_id), None)
+    if not target:
+        raise ValueError(f"Image asset '{image_id}' not found in brief '{brief_id}'.")
+
+    outfits = load_outfits(brief_id)
+    outfit_1 = next((o for o in outfits if o.get("outfit_id") == outfit_id_1), None)
+    if not outfit_1:
+        raise ValueError(f"Outfit '{outfit_id_1}' not found in brief '{brief_id}'.")
+
+    outfit_2 = next((o for o in outfits if o.get("outfit_id") == outfit_id_2), None) if outfit_id_2 else outfit_1
+
+    dual_prompt_data = build_dual_model_image_prompt(
+        outfit_1=outfit_1,
+        character_id_1=character_id_1,
+        character_id_2=character_id_2,
+        outfit_2=outfit_2,
+    )
+
+    old_status = target.get("approval_status", ApprovalStatus.PENDING.value)
+
+    # Invalidate downstream video if any
+    invalidate_downstream_for_outfit(brief_id, outfit_id_1, reason="Configured dual-model wardrobe look")
+
+    target["is_dual_model"] = True
+    target["character_id"] = character_id_1
+    target["dual_character_id"] = character_id_2
+    target["character_name"] = dual_prompt_data["character_name"]
+    target["reference_image"] = dual_prompt_data["reference_image"]
+    target["reference_image_2"] = dual_prompt_data["reference_image_2"]
+    target["prompt_data"] = dual_prompt_data
+    target["approval_status"] = ApprovalStatus.PENDING.value
+    target["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    # Pre-populate dual-model visual description
+    target["visual_description"] = {
+        "clothing_model_1": f"{outfit_1.get('garment_descriptions', '')} ({', '.join(outfit_1.get('colours', []))})",
+        "clothing_model_2": f"{outfit_2.get('garment_descriptions', '')} ({', '.join(outfit_2.get('colours', []))})",
+        "clothing": f"Model 1: {outfit_1.get('garment_descriptions', '')}; Model 2: {outfit_2.get('garment_descriptions', '')}",
+        "colours": f"Model 1: {', '.join(outfit_1.get('colours', []))}; Model 2: {', '.join(outfit_2.get('colours', []))}",
+        "fit": f"Model 1: {outfit_1.get('fit_and_silhouette', '')}; Model 2: {outfit_2.get('fit_and_silhouette', '')}",
+        "footwear": f"Model 1: {outfit_1.get('footwear', '')}; Model 2: {outfit_2.get('footwear', '')}",
+        "accessories": f"Model 1: {outfit_1.get('accessories', '')}; Model 2: {outfit_2.get('accessories', '')}",
+        "hairstyle": f"Model 1: {character_id_1}; Model 2: {character_id_2}",
+        "pose": "Model 1 on left/center posing confidently; Model 2 on right/center smiling warmly",
+        "background": "Stylish boutique walk-in wardrobe and dressing room with backlit vanity mirror and curated garment racks",
+        "positions": f"Left frame: Model 1 ({character_id_1}); Right frame: Model 2 ({character_id_2})",
+        "expressions": "Model 1 confident and speaking; Model 2 smiling silently with natural reactions",
+    }
+
+    save_image_assets(brief_id, images)
+
+    record_audit_event(
+        brief_id=brief_id,
+        stage="STAGE_4_IMAGES",
+        action="DUAL_MODEL_CONFIGURED",
+        from_status=old_status,
+        to_status=ApprovalStatus.PENDING.value,
+        asset_id=image_id,
+        details=f"Configured two-model wardrobe look with {character_id_1} and {character_id_2} by {user_name}.",
+    )
+
+    return target

@@ -7,12 +7,14 @@ from unittest.mock import patch
 from app.approval_workflow import ApprovalStatus
 from app.image_generation.image_service import (
     approve_image,
+    configure_dual_model_image_look,
     import_generated_image,
     prepare_image_prompts,
     reject_image,
     update_image_visual_description,
 )
 from app.image_generation.prompt_builder import (
+    build_dual_model_image_prompt,
     build_image_prompt_for_outfit,
     get_verified_character_profile,
 )
@@ -222,6 +224,79 @@ class TestImageStudio(unittest.TestCase):
             self.assertEqual(len(vids), 1)
             self.assertTrue(vids[0]["is_outdated"])
             self.assertEqual(vids[0]["approval_status"], "PENDING")
+
+
+    def test_build_dual_model_image_prompt_wardrobe_setting(self):
+        outfit2 = dict(self.mock_outfit)
+        outfit2["outfit_id"] = "OUTFIT-02"
+        outfit2["assigned_character_id"] = "WW-CHAR-02"
+        outfit2["outfit_title"] = "Tailored Blazer and Linen Trousers"
+        outfit2["garment_descriptions"] = "Charcoal oversized blazer and beige linen trousers."
+        outfit2["colours"] = ["Charcoal", "Beige"]
+
+        prompt_data = build_dual_model_image_prompt(
+            outfit_1=self.mock_outfit,
+            character_id_1="WW-CHAR-01",
+            character_id_2="WW-CHAR-02",
+            outfit_2=outfit2,
+        )
+
+        self.assertTrue(prompt_data["is_dual_model"])
+        self.assertEqual(prompt_data["character_id"], "WW-CHAR-01")
+        self.assertEqual(prompt_data["dual_character_id"], "WW-CHAR-02")
+        self.assertIn("WW-CHAR-01", prompt_data["prompt_text"])
+        self.assertIn("WW-CHAR-02", prompt_data["prompt_text"])
+        self.assertIn("Model 1 (Left)", prompt_data["prompt_text"])
+        self.assertIn("Model 2 (Right)", prompt_data["prompt_text"])
+
+        # Check stylish wardrobe background
+        self.assertIn("wardrobe and dressing room", prompt_data["prompt_text"].lower())
+        self.assertIn("vanity mirror", prompt_data["prompt_text"].lower())
+
+        # Check positions and expressions
+        self.assertIn("confident", prompt_data["prompt_text"].lower())
+        self.assertIn("smile", prompt_data["prompt_text"].lower())
+
+        # Check references for both models
+        self.assertTrue(prompt_data["reference_image"].endswith(".png"))
+        self.assertTrue(prompt_data["reference_image_2"].endswith(".png"))
+
+        # Check ChatGPT prompt explicitly tells user to attach BOTH references
+        chat_prompt = prompt_data["chatgpt_prompt"]
+        self.assertIn("TWO attached master model reference images", chat_prompt)
+        self.assertIn("Model 1", chat_prompt)
+        self.assertIn("Model 2", chat_prompt)
+
+    def test_configure_dual_model_image_look(self):
+        with (
+            patch("app.storage.RESEARCH_FILE", self.test_data_dir / "research.json"),
+            patch("app.storage.OUTFITS_FILE", self.test_data_dir / "outfits.json"),
+            patch("app.storage.IMAGE_ASSETS_FILE", self.test_data_dir / "image_assets.json"),
+            patch("app.storage.AUDIT_LOG_FILE", self.test_data_dir / "workflow_audit.json"),
+        ):
+            save_or_update_brief(self.mock_brief)
+            outfit2 = dict(self.mock_outfit)
+            outfit2["outfit_id"] = "OUTFIT-02"
+            outfit2["assigned_character_id"] = "WW-CHAR-02"
+            save_outfits(self.brief_id, [self.mock_outfit, outfit2])
+
+            prepare_image_prompts(self.brief_id)
+
+            dual_look = configure_dual_model_image_look(
+                brief_id=self.brief_id,
+                image_id="IMG-01",
+                character_id_1="WW-CHAR-01",
+                character_id_2="WW-CHAR-02",
+                outfit_id_1="OUTFIT-01",
+                outfit_id_2="OUTFIT-02",
+            )
+
+            self.assertTrue(dual_look["is_dual_model"])
+            self.assertEqual(dual_look["character_id"], "WW-CHAR-01")
+            self.assertEqual(dual_look["dual_character_id"], "WW-CHAR-02")
+            self.assertIn("wardrobe and dressing room", dual_look["visual_description"]["background"].lower())
+            self.assertIn("Model 1", dual_look["visual_description"]["positions"])
+            self.assertIn("Model 2", dual_look["visual_description"]["positions"])
 
 
 if __name__ == "__main__":
