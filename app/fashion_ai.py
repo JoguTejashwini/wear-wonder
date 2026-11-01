@@ -14,7 +14,7 @@ from app.topic_router import classify_topic
 
 load_dotenv()
 
-DEFAULT_MODEL = "gemini-3.5-flash"
+DEFAULT_MODEL = "gemini-3.1-flash-lite"
 ALLOWED_CHARACTER_IDS = {
     "WW-CHAR-01",
     "WW-CHAR-02",
