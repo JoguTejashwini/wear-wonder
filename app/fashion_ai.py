@@ -120,8 +120,15 @@ def interpret_idea_with_gemini(
 
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
+        try:
+            import streamlit as st
+            api_key = st.secrets.get("GEMINI_API_KEY")
+        except Exception:
+            pass
+
+    if not api_key:
         raise RuntimeError(
-            "GEMINI_API_KEY was not found. Check the project-root .env file."
+            "GEMINI_API_KEY was not found. Check the project-root .env file or Streamlit Cloud Secrets."
         )
 
     target_model = model or os.getenv("GEMINI_MODEL", DEFAULT_MODEL)
