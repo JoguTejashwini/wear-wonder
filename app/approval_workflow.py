@@ -53,6 +53,7 @@ def get_workflow_prerequisites(brief_id: str) -> dict[str, bool]:
             "videos_approved": False,
             "stage_6_ready": False,
             "has_assembled_video": False,
+            "publishing_approved": False,
             "is_published_or_scheduled": False,
         }
 
@@ -103,6 +104,7 @@ def get_workflow_prerequisites(brief_id: str) -> dict[str, bool]:
 
     pub_rec = load_publishing_record(brief_id)
     has_assembled_video = bool(pub_rec and pub_rec.get("video_file_path") and (PROJECT_DIR / pub_rec["video_file_path"]).is_file())
+    publishing_approved = bool(pub_rec and pub_rec.get("status") in ("APPROVED", "READY_TO_PUBLISH", "SCHEDULED", "PUBLISHED"))
     is_published_or_scheduled = bool(pub_rec and pub_rec.get("status") in ("SCHEDULED", "PUBLISHED"))
 
     return {
@@ -117,6 +119,7 @@ def get_workflow_prerequisites(brief_id: str) -> dict[str, bool]:
         "videos_approved": videos_approved,
         "stage_6_ready": stage_6_ready,
         "has_assembled_video": has_assembled_video,
+        "publishing_approved": publishing_approved,
         "is_published_or_scheduled": is_published_or_scheduled,
     }
 

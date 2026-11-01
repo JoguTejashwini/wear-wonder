@@ -39,6 +39,7 @@ from app.publishing import (
     import_assembled_video,
     set_master_image_as_thumbnail,
     approve_and_schedule_video,
+    save_and_approve_publishing_package,
 )
 
 
@@ -292,6 +293,12 @@ class TestBriefWorkflow(unittest.TestCase):
 
             can_p_pub, _ = can_proceed_to_stage(brief_id, WorkflowStage.STAGE_6_PUBLISHING)
             self.assertTrue(can_p_pub)
+
+            # Save and approve publishing package derived directly from task data
+            pkg_record = save_and_approve_publishing_package(brief_id, user_name="Lead Editor")
+            self.assertEqual(pkg_record["status"], "APPROVED")
+            self.assertIn("#Shorts", pkg_record["metadata"]["youtube"]["title"])
+            self.assertTrue(len(pkg_record["metadata"]["timestamps"]) > 0)
 
             # Ingest final assembled video and select approved look as thumbnail
             assembled_mp4 = b"\x00\x00\x00\x18ftypmp42assembledverticalshort"

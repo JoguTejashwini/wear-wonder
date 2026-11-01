@@ -38,16 +38,11 @@ from app.model_library import (
 )
 from app.research import execute_fashion_research
 from app.publishing import (
-    approve_and_schedule_video,
-    check_instagram_auth_status,
-    check_youtube_auth_status,
     get_or_create_publishing_record,
-    import_assembled_video,
-    import_custom_thumbnail,
-    record_manual_publication,
     refresh_publishing_metadata,
-    set_master_image_as_thumbnail,
     update_publishing_metadata,
+    set_recommended_thumbnail_choice,
+    save_and_approve_publishing_package,
 )
 from app.storage import (
     get_brief_by_id,
@@ -160,21 +155,21 @@ with st.sidebar:
             "APPROVED" if prereqs["videos_approved"] else ("GENERATED" if prereqs["videos_generated"] else "PENDING"),
         )
         pub_rec = load_publishing_record(active_brief_id)
-        pub_status = pub_rec.get("status") if pub_rec else "PENDING"
-        is_published = pub_status in ("SCHEDULED", "PUBLISHED")
+        pub_status = pub_rec.get("status") if pub_rec else "DRAFT"
+        is_pub_approved = pub_status in ("APPROVED", "READY_TO_PUBLISH", "SCHEDULED", "PUBLISHED")
         status_pill(
             "6. Publishing",
-            is_published,
-            pub_status if is_published else ("READY" if prereqs["stage_6_ready"] else "LOCKED"),
+            is_pub_approved,
+            pub_status if is_pub_approved else ("READY" if prereqs["stage_6_ready"] else "DRAFT"),
         )
 
         st.divider()
-        if is_published:
-            st.success(f"🚀 Video is {pub_status} across platforms!")
+        if is_pub_approved:
+            st.success(f"✨ Publishing package is {pub_status} for this task!")
         elif prereqs["stage_6_ready"]:
-            st.success("🎉 All assets approved! Ready for Stage 6: Video Editing & Publishing.")
+            st.success("🎉 All assets approved! Ready to review Stage 6 Publishing Package.")
         else:
-            st.info("🔒 Stage 6 Publishing locked until all clips are approved.")
+            st.info("ℹ️ Stage 6 Publishing drafts automatically from task outfits.")
 
 
 # --------------------------------------------------
@@ -1063,146 +1058,132 @@ with tab_videos:
 
 
 # --------------------------------------------------
-# TAB 6: STAGE 6: PUBLISHING & SCHEDULING STUDIO
+# TAB 6: STAGE 6: PUBLISHING & METADATA STUDIO
 # --------------------------------------------------
 with tab_publishing:
-    st.subheader("Stage 6: Publishing & Scheduling Studio")
+    st.subheader("Stage 6: Publishing & Metadata Studio")
     st.write(
-        "Upload your final assembled 9:16 vertical Short/Reel, review platform-optimized titles, "
-        "descriptions with timestamps, and schedule via official APIs or the 1-Click Publishing Kit."
+        "Automatically prepare platform-optimized publishing packages for YouTube Shorts and Instagram Reels "
+        "using your task's saved video idea, approved outfit sequence, dialogues, and master model imagery."
     )
 
     if not active_brief_id:
-        st.info("Select or create a brief to access Stage 6 Publishing.")
+        st.info("Select or create a brief to review its publishing package.")
     else:
+        brief = get_brief_by_id(active_brief_id) or {}
         prereqs = get_workflow_prerequisites(active_brief_id)
         pub_rec = get_or_create_publishing_record(active_brief_id)
 
-        if not prereqs["stage_6_ready"]:
-            st.warning(
-                "🔒 **Prerequisite Gate Notice**: Stages 1–5 have pending approvals. "
-                "You can upload your assembled video and preview draft metadata now, "
-                "but publishing/scheduling requires all earlier stage assets to be approved."
-            )
-        else:
-            st.success("✨ **Prerequisite Gates Cleared**: All outfits, images, and clips are approved! Ready for publishing.")
+        meta = pub_rec.get("metadata", {})
+        task_sum = meta.get("task_summary", {})
+        yt_meta = meta.get("youtube", {})
+        ig_meta = meta.get("instagram", {})
 
-        # --- Section 1: Final Video & Thumbnail Intake ---
-        st.markdown("### 1. Final Assembled Video & Custom Thumbnail")
-        st.caption("Upload your stitched 9:16 vertical video and select or upload a high-resolution thumbnail.")
+        # Task Context & Status Header
+        with st.container(border=True):
+            col_t1, col_t2, col_t3, col_t4 = st.columns([3, 2, 2, 2])
+            with col_t1:
+                st.markdown(f"**Task Project:** `{active_brief_id[:8]}`")
+                st.caption(f"Idea: *\"{brief.get('idea_original', 'Fashion concept')}\"*")
+            with col_t2:
+                st.markdown(f"**Target Audience:** {brief.get('audience', 'Everyday style')}")
+                st.caption(f"Topic: {task_sum.get('topic', 'Fashion').title()}")
+            with col_t3:
+                planned_dur = meta.get("total_planned_duration_formatted", "0:30")
+                st.markdown(f"**Planned Duration:** {planned_dur}")
+                st.caption(f"{task_sum.get('outfit_count', 0)} Approved Looks")
+            with col_t4:
+                rec_status = pub_rec.get("status", "DRAFT")
+                status_color = "green" if rec_status == "APPROVED" else "orange"
+                st.markdown(f"**Package Status:** :{status_color}[{rec_status}]")
+                if pub_rec.get("approved_at"):
+                    st.caption(f"Approved: {pub_rec['approved_at'][:10]}")
 
-        col_vid_box, col_thumb_box = st.columns([1, 1])
+        # --- Section 1: Project Assets & Video Sequence ---
+        st.markdown("### 1. Project Video Sequence & Master Thumbnail")
+        st.caption("Wear & Wonder automatically sequences your approved Stage 5 video clips and selects an approved Stage 4 master image as the recommended cover.")
 
-        # Left Column: Assembled Video
-        with col_vid_box:
-            st.markdown("#### 🎬 Assembled Video (9:16 Short / Reel)")
-            vid_path = pub_rec.get("video_file_path")
+        col_seq, col_thumb = st.columns([3, 2])
 
-            if vid_path:
-                full_vp = (PROJECT_DIR / vid_path).resolve()
-                if full_vp.is_file():
-                    st.video(str(full_vp))
-                    st.caption(f"📁 **File:** `{pub_rec.get('video_filename')}` · **Size:** {pub_rec.get('video_filesize', 0) / (1024 * 1024):.2f} MB")
+        with col_seq:
+            with st.container(border=True):
+                st.markdown("#### 🎬 Planned Outfit Sequence & Timestamps")
+                timestamps_list = meta.get("timestamps", [])
+                if timestamps_list:
+                    for item in timestamps_list:
+                        c_ts, c_name, c_dur = st.columns([1, 3, 1])
+                        with c_ts:
+                            st.code(item.get("timestamp", "0:00"))
+                        with c_name:
+                            st.write(f"**{item.get('label', 'Look')}**")
+                        with c_dur:
+                            st.caption(f"{item.get('duration_seconds', 6)}s")
                 else:
-                    st.warning(f"Video file missing on disk at: `{vid_path}`")
-            else:
-                st.info("No assembled video uploaded yet. Stitched Google Flow clips can be uploaded below:")
+                    st.info("No approved outfits found for this task yet. Approve outfits in Stage 3 to generate timeline.")
 
-            uploaded_assembled = st.file_uploader(
-                "Upload Assembled Video (.mp4, .mov, .webm)",
-                type=["mp4", "mov", "webm"],
-                key=f"upload_assembled_{active_brief_id}",
-            )
-            if uploaded_assembled:
-                if st.button("💾 Save Assembled Video", type="primary", key="btn_save_assembled_vid"):
-                    import_assembled_video(
-                        brief_id=active_brief_id,
-                        video_bytes=uploaded_assembled.getvalue(),
-                        filename=uploaded_assembled.name,
-                    )
-                    st.success("Assembled video saved successfully!")
-                    st.rerun()
+                # If Stage 5 clips are present with video files on disk, show clip preview
+                video_clips = load_video_assets(active_brief_id)
+                clips_with_files = [v for v in video_clips if v.get("file_path") and (PROJECT_DIR / v["file_path"]).is_file()]
+                if clips_with_files:
+                    with st.expander(f"▶️ Preview Stage 5 Generated Clips ({len(clips_with_files)} on disk)", expanded=False):
+                        for clip in clips_with_files:
+                            st.caption(f"{clip.get('clip_id')} — Outfit: {clip.get('outfit_id')}")
+                            st.video(str(PROJECT_DIR / clip["file_path"]))
 
-        # Right Column: Thumbnail / Cover
-        with col_thumb_box:
-            st.markdown("#### 🖼️ Cover / Thumbnail (9:16 Vertical)")
-            thumb_path = pub_rec.get("thumbnail_file_path")
+        with col_thumb:
+            with st.container(border=True):
+                st.markdown("#### 🖼️ Recommended Master Thumbnail")
+                rec_thumb = pub_rec.get("recommended_thumbnail") or meta.get("recommended_thumbnail")
 
-            if thumb_path:
-                full_tp = (PROJECT_DIR / thumb_path).resolve()
-                if full_tp.is_file():
-                    st.image(str(full_tp), caption=f"Thumbnail ({pub_rec.get('thumbnail_source', 'Custom')})", use_container_width=True)
+                if rec_thumb and rec_thumb.get("file_path"):
+                    full_tp = PROJECT_DIR / rec_thumb["file_path"]
+                    if full_tp.is_file():
+                        st.image(str(full_tp), caption=f"Recommended: {rec_thumb.get('character_name')} ({rec_thumb.get('outfit_id')})", use_container_width=True)
+                    else:
+                        st.warning(f"Image asset missing on disk: `{rec_thumb.get('file_path')}`")
                 else:
-                    st.warning(f"Thumbnail file missing at `{thumb_path}`")
-            else:
-                st.info("No thumbnail selected yet. Choose an approved Stage 4 image or upload a custom cover.")
+                    st.info("No approved Stage 4 image found. Approve looks in Stage 4 to establish a master thumbnail.")
 
-            thumb_tab_stage4, thumb_tab_custom = st.tabs(["Select Stage 4 Approved Image", "Upload Custom Cover"])
-
-            with thumb_tab_stage4:
+                # Dropdown to choose a different approved look as thumbnail
                 stage4_images = [
                     img for img in load_image_assets(active_brief_id)
                     if img.get("approval_status") == ApprovalStatus.APPROVED.value
-                    and img.get("file_path")
-                    and (PROJECT_DIR / img["file_path"]).is_file()
                 ]
-                if stage4_images:
+                if stage4_images and len(stage4_images) > 1:
                     img_opts = {f"{img.get('image_id')} ({img.get('character_name', 'Model')}) - {img.get('outfit_id')}": img.get("image_id") for img in stage4_images}
-                    selected_img_label = st.selectbox("Choose Approved Look Image", list(img_opts.keys()), key="select_s4_thumb")
-                    if st.button("Use Stage 4 Image as Thumbnail", key="btn_set_s4_thumb", use_container_width=True):
-                        set_master_image_as_thumbnail(active_brief_id, img_opts[selected_img_label])
-                        st.success("Stage 4 approved image set as video thumbnail!")
-                        st.rerun()
-                else:
-                    st.caption("No approved Stage 4 images with files on disk found. Upload and approve images in Stage 4 first, or upload custom cover.")
-
-            with thumb_tab_custom:
-                uploaded_thumb = st.file_uploader(
-                    "Upload Custom Cover (.png, .jpg, .webp)",
-                    type=["png", "jpg", "jpeg", "webp"],
-                    key=f"upload_custom_thumb_{active_brief_id}",
-                )
-                if uploaded_thumb:
-                    if st.button("💾 Save Custom Thumbnail", key="btn_save_custom_thumb", use_container_width=True):
-                        import_custom_thumbnail(
-                            brief_id=active_brief_id,
-                            image_bytes=uploaded_thumb.getvalue(),
-                            filename=uploaded_thumb.name,
-                        )
-                        st.success("Custom thumbnail saved!")
+                    selected_label = st.selectbox("Change Recommended Thumbnail", list(img_opts.keys()), key="select_custom_s4_thumb")
+                    if st.button("Set as Thumbnail Recommendation", key="btn_update_thumb_choice"):
+                        set_recommended_thumbnail_choice(active_brief_id, img_opts[selected_label])
+                        st.success("Updated recommended thumbnail!")
                         st.rerun()
 
         st.divider()
 
-        # --- Section 2: Platform Metadata Studio ---
-        st.markdown("### 2. Platform-Specific Titles, Descriptions & SEO Tags")
-        st.caption("Auto-generated based on project brief, character dialogue, approved styling, and multi-look timestamps.")
-
-        col_meta_top, col_meta_btn = st.columns([3, 1])
-        with col_meta_btn:
-            if st.button("🔄 Regenerate Metadata", key="btn_refresh_publishing_meta", use_container_width=True):
+        # --- Section 2: Platform-Specific Publishing Details ---
+        col_hdr, col_regen = st.columns([3, 1])
+        with col_hdr:
+            st.markdown("### 2. Platform-Specific Publishing Details")
+            st.caption("Review and edit your platform metadata. Manual edits are preserved unless you explicitly click Regenerate.")
+        with col_regen:
+            if st.button("🔄 Regenerate from Project Data", key="btn_refresh_publishing_meta", use_container_width=True):
                 refresh_publishing_metadata(active_brief_id)
-                st.success("Metadata regenerated from latest outfits!")
+                st.success("Metadata regenerated from latest task brief and outfits!")
                 st.rerun()
 
-        meta = pub_rec.get("metadata", {})
-        yt_meta = meta.get("youtube", {})
-        ig_meta = meta.get("instagram", {})
-
-        meta_tab_yt, meta_tab_ig = st.tabs(["🔴 YouTube Shorts Metadata", "📸 Instagram Reels Metadata"])
+        meta_tab_yt, meta_tab_ig = st.tabs(["🔴 YouTube Shorts Package", "📸 Instagram Reels Package"])
 
         with meta_tab_yt:
             with st.form("form_yt_metadata"):
                 curr_yt_title = yt_meta.get("title", "")
                 yt_title_input = st.text_input(
-                    f"Title (Characters: {len(curr_yt_title)}/70 — must end with #Shorts)",
+                    f"Title (Characters: {len(curr_yt_title)}/70 — ends with #Shorts)",
                     value=curr_yt_title,
                 )
                 curr_yt_desc = yt_meta.get("description", "")
                 yt_desc_input = st.text_area(
-                    "Description & Multi-Look Timestamps",
+                    "Description with Timestamps & Outfit Details",
                     value=curr_yt_desc,
-                    height=240,
+                    height=260,
                 )
                 curr_yt_tags = yt_meta.get("tags_comma_separated", ", ".join(yt_meta.get("tags", [])))
                 yt_tags_input = st.text_area(
@@ -1210,9 +1191,9 @@ with tab_publishing:
                     value=curr_yt_tags,
                     height=80,
                 )
-                st.caption("Category: **26 — Howto & Style** (Automatic)")
+                st.caption("Category: **26 — Howto & Style** (Preset)")
 
-                if st.form_submit_button("💾 Save YouTube Metadata", type="primary"):
+                if st.form_submit_button("💾 Save YouTube Changes", type="primary"):
                     clean_tags = [t.strip() for t in yt_tags_input.split(",") if t.strip()]
                     update_publishing_metadata(
                         active_brief_id,
@@ -1224,299 +1205,75 @@ with tab_publishing:
                             "tags_comma_separated": yt_tags_input,
                         },
                     )
-                    st.success("YouTube metadata updated!")
+                    st.success("YouTube metadata saved!")
                     st.rerun()
 
         with meta_tab_ig:
             with st.form("form_ig_metadata"):
-                curr_ig_caption = ig_meta.get("caption", "")
+                curr_ig_caption = ig_meta.get("caption_without_hashtags") or ig_meta.get("caption", "")
                 ig_caption_input = st.text_area(
-                    "Instagram Caption (Hook + Look Breakdown + CTA)",
+                    "Instagram Caption (Hook + Outfit Descriptions + Call to Action)",
                     value=curr_ig_caption,
                     height=240,
                 )
                 curr_ig_hashtags = ig_meta.get("hashtags_text", " ".join(ig_meta.get("hashtags", [])))
                 ig_hashtags_input = st.text_area(
-                    "Curated Hashtags (Tiered: Niche, Trending & Format)",
+                    "Relevant Hashtags (Tiered: Niche, Format & Topic)",
                     value=curr_ig_hashtags,
                     height=90,
                 )
 
-                if st.form_submit_button("💾 Save Instagram Metadata", type="primary"):
+                if st.form_submit_button("💾 Save Instagram Changes", type="primary"):
                     clean_hts = [h.strip() for h in ig_hashtags_input.split() if h.strip()]
+                    full_caption = ig_caption_input.strip() + "\n\n" + ig_hashtags_input.strip()
                     update_publishing_metadata(
                         active_brief_id,
                         "instagram",
                         {
-                            "caption": ig_caption_input,
+                            "caption": full_caption,
+                            "caption_without_hashtags": ig_caption_input,
                             "hashtags": clean_hts,
                             "hashtags_text": ig_hashtags_input,
                         },
                     )
-                    st.success("Instagram metadata updated!")
+                    st.success("Instagram metadata saved!")
                     st.rerun()
 
         st.divider()
 
-        # --- Section 3: Scheduling & Dispatch Controls ---
-        st.markdown("### 3. Scheduling & Privacy Settings")
-        col_plat, col_time = st.columns([1, 1])
+        # --- Section 3: Review, Approve & Save Publishing Package ---
+        st.markdown("### 3. Review, Approve & Save Publishing Package")
+        st.caption("Finalize this task's publishing package. Wear & Wonder stores the approved metadata alongside the brief for distribution.")
 
-        with col_plat:
-            st.markdown("#### Destination Platforms")
-            yt_checked = st.checkbox("YouTube Shorts", value=True, key="chk_yt")
-            ig_checked = st.checkbox("Instagram Reels", value=True, key="chk_ig")
-
-            privacy_status = st.selectbox(
-                "YouTube Visibility",
-                ["private", "public", "unlisted"],
-                index=0,
-                format_func=lambda s: s.capitalize() + (" (Required for scheduled publishing)" if s == "private" else ""),
-                key="sel_privacy_status",
-            )
-
-        with col_time:
-            st.markdown("#### Publication Timing")
-            timing_choice = st.radio(
-                "Choose when to publish:",
-                ["Schedule for Later", "Publish Immediately"],
-                key="rad_timing_choice",
-            )
-
-            scheduled_iso_str = None
-            if timing_choice == "Schedule for Later":
-                now_plus_day = datetime.now() + timedelta(days=1)
-                sched_date = st.date_input("Scheduled Date", value=now_plus_day.date(), min_value=datetime.now().date(), key="date_sched")
-                sched_time = st.time_input("Scheduled Time (Local)", value=datetime.strptime("18:00", "%H:%M").time(), key="time_sched")
-                combined_local = datetime.combine(sched_date, sched_time)
-                # Convert to UTC ISO string
-                scheduled_iso_str = combined_local.astimezone(timezone.utc).isoformat()
-                st.info(f"📅 **Scheduled for:** {combined_local.strftime('%B %d, %Y at %I:%M %p')} Local (`{scheduled_iso_str}` UTC)")
-
-        st.divider()
-
-        # --- Section 4: Mandatory Approval Gate & API Dispatch ---
-        st.markdown("### 4. Mandatory Approval Gate & API Publishing")
-        st.caption("Wear & Wonder strictly requires explicit authorization before initiating any platform publication.")
-
-        yt_auth = check_youtube_auth_status()
-        ig_auth = check_instagram_auth_status()
-
-        col_auth1, col_auth2 = st.columns(2)
-        with col_auth1:
-            if yt_auth["configured"]:
-                st.success(f"🟢 **YouTube API Ready:** {yt_auth['details']}")
-            else:
-                st.info(f"ℹ️ **YouTube API:** {yt_auth['details']}")
-
-        with col_auth2:
-            if ig_auth["configured"]:
-                st.success(f"🟢 **Instagram API Ready:** {ig_auth['details']}")
-            else:
-                st.info(f"ℹ️ **Instagram API:** {ig_auth['details']}")
-
-        has_video = bool(pub_rec.get("video_file_path") and (PROJECT_DIR / pub_rec["video_file_path"]).is_file())
-
-        if not has_video:
-            st.error("⚠️ **Gate Blocked**: Please upload an assembled video above before scheduling.")
-        elif not prereqs["stage_6_ready"]:
-            st.warning("⚠️ **Gate Warning**: Stages 1–5 have unapproved assets. Review and approve earlier stages to unlock publishing.")
-
-        gate_confirmed = st.checkbox(
-            "✅ **Mandatory Creator Approval**: I have reviewed the assembled video, custom thumbnail, "
-            "dialogue lip-sync, and platform-tailored metadata with multi-look timestamps, and I authorize "
-            "Wear & Wonder to schedule/publish this content.",
-            key="chk_mandatory_gate",
-            disabled=not has_video,
-        )
-
-        col_btn_api, col_btn_test = st.columns([2, 1])
-
-        target_platforms = []
-        if yt_checked:
-            target_platforms.append("youtube")
-        if ig_checked:
-            target_platforms.append("instagram")
-
-        with col_btn_api:
-            btn_publish = st.button(
-                "🚀 Approve & Publish / Schedule via API",
-                type="primary",
-                disabled=not (gate_confirmed and target_platforms),
-                use_container_width=True,
-                key="btn_run_api_publish",
-            )
-            if btn_publish:
-                try:
-                    res = approve_and_schedule_video(
-                        brief_id=active_brief_id,
-                        platforms=target_platforms,
-                        scheduled_time_iso=scheduled_iso_str,
-                        privacy_status=privacy_status,
-                        user_name="Creator",
-                        mock_mode=False,
-                    )
-                    st.success(f"🎉 Success! Video has been {res.get('status')} across {', '.join(target_platforms)}!")
-                    st.rerun()
-                except RuntimeError as exc:
-                    st.error(f"Platform API Error: {exc}")
-                    st.info("💡 You can use the Zero-Setup 1-Click Publishing Kit below immediately with ₹0 and no configuration!")
-                except Exception as exc:
-                    st.error(f"Error: {exc}")
-
-        with col_btn_test:
-            btn_test_sim = st.button(
-                "🧪 Test Integration (Sandbox Dispatch)",
-                disabled=not (gate_confirmed and target_platforms),
-                use_container_width=True,
-                key="btn_test_sandbox",
-            )
-            if btn_test_sim:
-                try:
-                    res = approve_and_schedule_video(
-                        brief_id=active_brief_id,
-                        platforms=target_platforms,
-                        scheduled_time_iso=scheduled_iso_str,
-                        privacy_status=privacy_status,
-                        user_name="Creator",
-                        mock_mode=True,
-                    )
-                    st.success(f"🧪 Sandbox Verified! Simulated {res.get('status')} across {', '.join(target_platforms)}.")
-                    st.rerun()
-                except Exception as exc:
-                    st.error(str(exc))
-
-        st.divider()
-
-        # --- Section 5: Zero-Setup 1-Click Publishing Kit (Mode B) ---
         with st.container(border=True):
-            st.markdown("### ⚡ Zero-Setup 1-Click Publishing Kit (Instant ₹0 / No Developer Setup)")
-            st.write(
-                "Don't want to configure Google Cloud or Meta developer consoles? "
-                "You can publish right now for ₹0 using official web studios with our 1-click formatted kits:"
-            )
-
-            col_kit_yt, col_kit_ig = st.columns(2)
-
-            with col_kit_yt:
-                st.markdown("#### 🔴 YouTube Studio Kit")
-                st.caption("1. Copy pre-formatted title, description with timestamps, and tags.\n2. Click button to open YouTube Studio upload dialog directly.")
-
-                st.markdown("**Title:**")
-                st.code(yt_meta.get("title", ""), language="text")
-
-                st.markdown("**Description & Timestamps:**")
-                st.code(yt_meta.get("description", ""), language="text")
-
-                st.markdown("**SEO Search Tags:**")
-                st.code(yt_meta.get("tags_comma_separated", ""), language="text")
-
-                if vid_path and (PROJECT_DIR / vid_path).is_file():
-                    with open(PROJECT_DIR / vid_path, "rb") as f_dl:
-                        st.download_button(
-                            "📥 Download Assembled Video (.mp4)",
-                            data=f_dl.read(),
-                            file_name=pub_rec.get("video_filename", "video.mp4"),
-                            mime="video/mp4",
-                            key="dl_pub_video_yt",
-                            use_container_width=True,
-                        )
-
-                if thumb_path and (PROJECT_DIR / thumb_path).is_file():
-                    with open(PROJECT_DIR / thumb_path, "rb") as f_tp:
-                        st.download_button(
-                            "📥 Download Thumbnail Cover",
-                            data=f_tp.read(),
-                            file_name=Path(thumb_path).name,
-                            mime="image/png",
-                            key="dl_pub_thumb_yt",
-                            use_container_width=True,
-                        )
-
-                st.link_button(
-                    "🔗 Open YouTube Studio Upload",
-                    "https://studio.youtube.com/channel/UC/videos/upload?d=pt",
+            col_ap1, col_ap2 = st.columns([3, 1])
+            with col_ap1:
+                approval_confirmed = st.checkbox(
+                    "✅ **Approve Publishing Package**: I have reviewed the platform titles, descriptions, "
+                    "timestamps, and hashtags generated from this project and approve this package for Task "
+                    f"`{active_brief_id[:8]}`.",
+                    value=(pub_rec.get("status") == "APPROVED"),
+                    key=f"chk_approve_pkg_{active_brief_id}",
+                )
+            with col_ap2:
+                btn_approve_pkg = st.button(
+                    "💾 Save & Approve Package",
                     type="primary",
+                    disabled=not approval_confirmed,
                     use_container_width=True,
+                    key="btn_save_approve_pkg",
                 )
 
-            with col_kit_ig:
-                st.markdown("#### 📸 Meta Business Suite Kit")
-                st.caption("1. Copy pre-formatted aesthetic caption & curated hashtags.\n2. Click button to open Meta Business Suite Reels composer directly.")
+            if btn_approve_pkg:
+                save_and_approve_publishing_package(active_brief_id, user_name="Creator")
+                st.success(f"🎉 Publishing Package Approved! Saved permanently for Task `{active_brief_id[:8]}`.")
+                st.rerun()
 
-                st.markdown("**Instagram Caption & Hashtags:**")
-                st.code(ig_meta.get("caption", ""), language="text")
-
-                if vid_path and (PROJECT_DIR / vid_path).is_file():
-                    with open(PROJECT_DIR / vid_path, "rb") as f_dl_ig:
-                        st.download_button(
-                            "📥 Download Assembled Reel (.mp4)",
-                            data=f_dl_ig.read(),
-                            file_name=pub_rec.get("video_filename", "reel.mp4"),
-                            mime="video/mp4",
-                            key="dl_pub_video_ig",
-                            use_container_width=True,
-                        )
-
-                st.link_button(
-                    "🔗 Open Meta Business Suite Reels Composer",
-                    "https://business.facebook.com/latest/reels_composer",
-                    type="primary",
-                    use_container_width=True,
+            if pub_rec.get("status") == "APPROVED":
+                st.success(
+                    f"✨ **Certified Publishing Package**: Approved by `{pub_rec.get('approved_by', 'Creator')}` "
+                    f"on {pub_rec.get('approved_at', '')[:19].replace('T', ' ')}. Ready for publishing."
                 )
-
-            st.divider()
-            with st.expander("📝 Record Manual Publication in Audit Log", expanded=False):
-                st.write("If you uploaded or scheduled directly through YouTube Studio or Meta Business Suite, record your live link here:")
-                with st.form("form_manual_record"):
-                    man_plat = st.selectbox("Platform", ["YouTube", "Instagram"], key="man_plat")
-                    man_url = st.text_input("Live or Scheduled URL", placeholder="https://youtube.com/shorts/... or https://instagram.com/reel/...")
-                    man_notes = st.text_input("Notes", placeholder="e.g. Scheduled for Friday 6 PM via YouTube Studio")
-                    if st.form_submit_button("Record Manual Publication", type="primary"):
-                        if man_url.strip():
-                            record_manual_publication(
-                                brief_id=active_brief_id,
-                                platform=man_plat,
-                                live_url=man_url.strip(),
-                                notes=man_notes,
-                            )
-                            st.success(f"Recorded {man_plat} publication!")
-                            st.rerun()
-                        else:
-                            st.error("Please provide a valid URL.")
-
-        st.divider()
-
-        # --- Section 6: Live Platform Status & Verification ---
-        st.markdown("### 5. Live Platform Status & Verification")
-        p_stat = pub_rec.get("platforms_status", {})
-        yt_p = p_stat.get("youtube", {})
-        ig_p = p_stat.get("instagram", {})
-
-        col_stat_yt, col_stat_ig = st.columns(2)
-        with col_stat_yt:
-            with st.container(border=True):
-                st.markdown("#### 🔴 YouTube Shorts Status")
-                st.write(f"**Status:** `{yt_p.get('status', 'PENDING')}`")
-                if yt_p.get("url"):
-                    st.markdown(f"**Live URL:** [{yt_p.get('url')}]({yt_p.get('url')})")
-                    st.caption(f"Video ID: `{yt_p.get('video_id')}`")
-                if yt_p.get("scheduled_time"):
-                    st.caption(f"📅 Scheduled Time: `{yt_p.get('scheduled_time')}`")
-                if yt_p.get("published_at"):
-                    st.caption(f"Published At: `{yt_p.get('published_at')[:19].replace('T', ' ')}`")
-
-        with col_stat_ig:
-            with st.container(border=True):
-                st.markdown("#### 📸 Instagram Reels Status")
-                st.write(f"**Status:** `{ig_p.get('status', 'PENDING')}`")
-                if ig_p.get("permalink"):
-                    st.markdown(f"**Live URL:** [{ig_p.get('permalink')}]({ig_p.get('permalink')})")
-                    st.caption(f"Media ID: `{ig_p.get('media_id')}`")
-                if ig_p.get("scheduled_time"):
-                    st.caption(f"📅 Scheduled Time: `{ig_p.get('scheduled_time')}`")
-                if ig_p.get("published_at"):
-                    st.caption(f"Published At: `{ig_p.get('published_at')[:19].replace('T', ' ')}`")
 
 
 # --------------------------------------------------
